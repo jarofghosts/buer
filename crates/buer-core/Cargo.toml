@@ -1,0 +1,15 @@
+[package]
+name = "buer-core"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+description = "The sequence model, scheduler and MPE output of the buer quartertone sequencer"
+
+# Serde is the one dependency, and only so the model has a single definition that the plugin can
+# persist. Everything else here is arithmetic and must stay trivially testable.
+[dependencies]
+serde = { version = "1", features = ["derive"], optional = true }
+
+[features]
+default = []
+serde = ["dep:serde"]

@@ -1,0 +1,39 @@
+[package]
+name = "buer"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+description = "A quartertone piano roll and sequencer that speaks MPE"
+
+[lib]
+crate-type = ["cdylib", "lib"]
+
+# A standalone build, so the sequencer can drive a synth without a host and so the editor can be
+# worked on without one.
+[[bin]]
+name = "buer-standalone"
+path = "src/main.rs"
+required-features = ["standalone"]
+
+[features]
+standalone = ["nih_plug/standalone"]
+
+[dependencies]
+buer-core = { path = "../buer-core", features = ["serde"] }
+nih_plug = { git = "https://github.com/robbert-vdh/nih-plug.git", features = [
+    "assert_process_allocs",
+] }
+nih_plug_egui = { git = "https://github.com/robbert-vdh/nih-plug.git" }
+
+# Standard MIDI files, in and out.
+midly = "0.5"
+
+rfd = "0.15"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+parking_lot = "0.12"
+
+# To read the desktop's own scaling where the host declines to report one. Already in the tree by
+# way of baseview, which asks the same question and then drops the answer — see `display`.
+[target.'cfg(all(unix, not(target_os = "macos")))'.dependencies]
+x11rb = "0.13"
