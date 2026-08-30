@@ -177,8 +177,8 @@ quintuplets divide exactly, every resolution a MIDI file arrives at divides it (
 ## Building
 
 ```
-cargo fmt --all --check          # the one thing CI checks
-cargo test --workspace
+cargo fmt --all --check          # what CI checks
+cargo test --workspace           # and this
 cargo xtask bundle buer --release
 clap-validator validate target/bundled/buer.clap
 ```
