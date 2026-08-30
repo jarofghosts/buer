@@ -275,15 +275,27 @@ pub fn show(
     outcome
 }
 
+/// The pointer, but only where it is over `rect` with nothing drawn on top of it.
+///
+/// Zooming and the lane column read the pointer straight from the context rather than through a
+/// `Response`, so that they answer wherever it is without needing a widget under it. That also
+/// means nothing stops them answering *through* something floating over the roll — the settings
+/// menu, a combo box — which is what the layer settles. Nothing on top reads as `None`: an area is
+/// in the order, and the roll's own background layer is not.
+fn pointer_in(ui: &egui::Ui, rect: egui::Rect) -> Option<egui::Pos2> {
+    let at = ui.ctx().pointer_latest_pos()?;
+    let covered = ui
+        .ctx()
+        .layer_id_at(at)
+        .is_some_and(|layer| layer != ui.layer_id());
+    (rect.contains(at) && !covered).then_some(at)
+}
+
 fn scroll_and_zoom(ui: &egui::Ui, grid: egui::Rect, view: &mut View, length: u32, scale: f32) {
-    let Some(pointer) = ui.ctx().pointer_latest_pos() else {
+    let Some(pointer) = pointer_in(ui, grid) else {
         view.hold(grid, length);
         return;
     };
-    if !grid.contains(pointer) {
-        view.hold(grid, length);
-        return;
-    }
 
     let (scroll, modifiers) = ui.input(|input| (input.smooth_scroll_delta, input.modifiers));
     if scroll != egui::Vec2::ZERO {
@@ -730,11 +742,8 @@ fn lane_column(ui: &egui::Ui, pattern: &mut Pattern, ctx: &Context, rect: egui::
 
     let view = &ctx.view;
     let hair = ctx.metrics.at(1.0).max(1.0);
-    let pointer = ui
-        .ctx()
-        .pointer_latest_pos()
-        .filter(|at| rect.contains(*at));
-    let clicked = ui.input(|input| input.pointer.primary_pressed());
+    let pointer = pointer_in(ui, rect);
+    let clicked = pointer.is_some() && ui.input(|input| input.pointer.primary_pressed());
     let mut changed = false;
 
     let mut shapes = Vec::new();

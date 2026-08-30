@@ -61,11 +61,14 @@ const WINDOW_PADDING: f32 = 8.0;
 const SECTION_GAP: f32 = 6.0;
 /// The share of the window the roll takes when the panels want everything else, and the floor that
 /// share is held above.
-const ROLL_FRACTION: f32 = 0.55;
-const ROLL_MIN_HEIGHT: f32 = 180.0;
+const ROLL_FRACTION: f32 = 0.7;
+const ROLL_MIN_HEIGHT: f32 = 240.0;
 /// One cell of the pattern bank strip.
 const SLOT_WIDTH: f32 = 46.0;
 const SLOT_HEIGHT: f32 = 30.0;
+/// How wide the settings menu is, in columns of the control grid: enough for a row of radio buttons
+/// to lie flat, and no wider than the default window has room for.
+const SETTINGS_COLUMNS: usize = 3;
 /// How many banks back the undo stack reaches.
 const HISTORY_DEPTH: usize = 64;
 
@@ -240,6 +243,8 @@ struct EditorState {
     /// Whether export writes the whole bank, and how many times a pattern is laid end to end.
     export_bank: bool,
     export_repeats: u32,
+    /// Whether the settings menu is open over the window.
+    settings_open: bool,
 }
 
 impl Default for EditorState {
@@ -263,6 +268,7 @@ impl Default for EditorState {
             scale_root: 0,
             export_bank: false,
             export_repeats: 1,
+            settings_open: false,
         }
     }
 }
@@ -376,13 +382,15 @@ pub fn create(params: Arc<BuerParams>, shared: Arc<Shared>) -> Option<Box<dyn Ed
                             ui.set_max_width(
                                 (ui.available_width() - ui.spacing().scroll.bar_width).max(1.0),
                             );
-                            settings(ui, &params, setter, metrics);
+                            transport(ui, &params, setter, metrics);
                             ui.separator();
-                            generation(ui, &params, &shared, state, metrics);
+                            randomise(ui, &params, &shared, state, metrics);
                         });
                         state.panels_height = Some(panels.content_size.y);
                     });
             });
+
+            settings(ctx, &params, &shared, setter, state, metrics);
 
             keys(ctx, &params, state, &shared);
         },
@@ -501,8 +509,9 @@ fn keys(
     state: &mut EditorState,
     shared: &Arc<Shared>,
 ) {
-    // Somebody typing an exact value into a reading is not somebody deleting the selection.
-    if ctx.memory(|memory| memory.focused().is_some()) {
+    // Somebody typing an exact value into a reading is not somebody deleting the selection, and
+    // neither is somebody with the settings menu open over the roll.
+    if state.settings_open || ctx.memory(|memory| memory.focused().is_some()) {
         return;
     }
 
@@ -631,8 +640,18 @@ fn header(
             export_midi(params, shared, editor);
         }
 
+        ui.add_space(metrics.at(SECTION_GAP));
+        // Selectable rather than a plain button, so the header says whether the menu is up — it is
+        // drawn over this row and covers the mark, and there is no other way to tell.
+        if ui
+            .selectable_label(editor.settings_open, "settings…")
+            .clicked()
+        {
+            editor.settings_open = !editor.settings_open;
+        }
+
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            scale_control(ui, params, shared, state, setter);
+            ui_scale_control(ui, params, shared, state, setter);
         });
     });
 
@@ -837,7 +856,62 @@ fn chip(ui: &mut egui::Ui, name: &str, selected: bool, choose: impl FnOnce()) {
     }
 }
 
-fn settings(ui: &mut egui::Ui, params: &Arc<BuerParams>, setter: &ParamSetter, metrics: Metrics) {
+/// The settings menu: what is set once for an instance and then left alone.
+///
+/// Both of the sections behind it used to sit under the roll, where between them they were four
+/// rows of controls permanently in the way of the thing they configure. Over the window instead,
+/// and only when asked for.
+fn settings(
+    ctx: &egui::Context,
+    params: &Arc<BuerParams>,
+    shared: &Arc<Shared>,
+    setter: &ParamSetter,
+    state: &mut EditorState,
+    metrics: Metrics,
+) {
+    if !state.settings_open {
+        return;
+    }
+
+    let screen = ctx.screen_rect();
+    let menu = egui::Modal::new(egui::Id::new("settings")).show(ctx, |ui| {
+        // An area sizes itself to whatever goes in it, and a wrapping row offered unlimited width
+        // never wraps. The cell grid needs a width to wrap within, so it is handed one.
+        let width = metrics
+            .span(ui, SETTINGS_COLUMNS)
+            .min(screen.width() - metrics.at(WINDOW_PADDING) * 2.0)
+            .max(metrics.span(ui, 1));
+        ui.set_max_width(width);
+
+        ui.horizontal(|ui| {
+            ui.label(egui::RichText::new("settings").heading().color(TEXT));
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if ui.button("close").clicked() {
+                    state.settings_open = false;
+                }
+            });
+        });
+        ui.separator();
+
+        // At a large ui scale in a small window the two sections are taller than the screen, and a
+        // menu that cannot be scrolled back to its own close button is a trap.
+        egui::ScrollArea::vertical()
+            .max_height(screen.height() * 0.75)
+            .show(ui, |ui| {
+                ui.set_max_width(width);
+                output(ui, params, setter, metrics);
+                ui.separator();
+                scale(ui, params, shared, state, metrics);
+            });
+    });
+
+    if menu.should_close() {
+        state.settings_open = false;
+    }
+}
+
+/// How pitch leaves the plugin.
+fn output(ui: &mut egui::Ui, params: &Arc<BuerParams>, setter: &ParamSetter, metrics: Metrics) {
     ui.label(egui::RichText::new("output").strong());
     ui.horizontal_wrapped(|ui| {
         radio(ui, "pitch out", &params.pitch_out, setter, metrics);
@@ -862,8 +936,9 @@ fn settings(ui: &mut egui::Ui, params: &Arc<BuerParams>, setter: &ParamSetter, m
             .italics(),
         );
     }
+}
 
-    ui.separator();
+fn transport(ui: &mut egui::Ui, params: &Arc<BuerParams>, setter: &ParamSetter, metrics: Metrics) {
     ui.label(egui::RichText::new("transport").strong());
     ui.horizontal_wrapped(|ui| {
         radio(ui, "clock", &params.clock, setter, metrics);
@@ -1041,8 +1116,9 @@ fn load_scale(path: &Path, params: &Arc<BuerParams>, shared: &Arc<Shared>, keyma
     }
 }
 
-/// The scale that decides which lanes a note may land on, and the generators that use it.
-fn generation(
+/// The scale that decides which lanes a note may land on. Behind the settings menu, because the
+/// column of toggles down the left of the roll is the same constraint and is always there.
+fn scale(
     ui: &mut egui::Ui,
     params: &Arc<BuerParams>,
     shared: &Arc<Shared>,
@@ -1163,8 +1239,18 @@ fn generation(
             commit(state, params);
         }
     });
+}
 
-    ui.separator();
+/// The generators that write into whatever lanes [`scale`] left open.
+fn randomise(
+    ui: &mut egui::Ui,
+    params: &Arc<BuerParams>,
+    shared: &Arc<Shared>,
+    state: &mut EditorState,
+    metrics: Metrics,
+) {
+    let slot = state.slot;
+
     ui.label(egui::RichText::new("randomise").strong());
 
     let mut spec = params.random.read().clone();
@@ -1488,7 +1574,7 @@ fn resize(ctx: &egui::Context, state: &Arc<EguiState>, setter: &ParamSetter, siz
 
 /// How large the interface draws itself, in steps. Laid out right to left, so it reads
 /// `ui scale [−] 125 % [+]`.
-fn scale_control(
+fn ui_scale_control(
     ui: &mut egui::Ui,
     params: &Arc<BuerParams>,
     shared: &Arc<Shared>,

@@ -70,7 +70,9 @@ grow, and at 200 % a note comes out four pixels tall and reads as nothing at all
 ## Getting a quarter tone out
 
 There are two ways to say "fifty cents above this note" to a CLAP host, and they are not
-interchangeable.
+interchangeable. `pitch out` and what follows from it — the MPE zone, the bend range — are behind
+**settings…** in the header, along with the scale: set once for an instance, and then left alone
+where they are not taking room from the roll.
 
 - **mpe** (the default) gives every sounding note a channel of its own and bends that channel. It
   arrives everywhere — every MIDI-dialect host, every hardware synth, and the standalone build's own
@@ -122,9 +124,12 @@ Three sources stamp into it:
 - the **built-in set** — chromatic 24 and 12, the modes, and the maqam families (rast, bayati, saba,
   sikah, huzam, hijaz, nawa athar) as 24-EDO expresses them, which is an approximation the theory
   itself makes;
-- a **Scala `.scl`** file, dropped on the editor or loaded from the panel. Every degree lands on its
+- a **Scala `.scl`** file, dropped on the editor or loaded from **settings…**. Every degree lands on its
   nearest lane and the editor says how far the worst one had to move — nothing is dropped quietly;
 - your own hand, on the toggles.
+
+The built-in set and the `.scl` loader are both in **settings…**; the toggles are always there,
+because they are the constraint rather than a way of writing one.
 
 The constraint is per pattern, so a bank can hold a bayati beside a rast. The scale file is per
 instance, because there is only one of it, and it is stored in the state so a project carries its own
