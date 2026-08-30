@@ -107,7 +107,9 @@ impl Buer {
             if audition.remaining == 0 {
                 let voice = audition.voice;
                 *slot = None;
-                self.player.mpe().note_off(voice, &mut |event| emit(0, event));
+                self.player
+                    .mpe()
+                    .note_off(voice, &mut |event| emit(0, event));
             }
         }
 
@@ -325,7 +327,11 @@ impl Plugin for Buer {
             0.0
         };
 
-        let playing = if free { params.play.value() } else { host_playing };
+        let playing = if free {
+            params.play.value()
+        } else {
+            host_playing
+        };
         if free && playing && !self.was_free_running {
             self.free_ticks = 0.0;
         }
@@ -409,8 +415,7 @@ impl Plugin for Buer {
 
 impl ClapPlugin for Buer {
     const CLAP_ID: &'static str = "supply.grimoire.buer";
-    const CLAP_DESCRIPTION: Option<&'static str> =
-        Some("a quartertone piano roll that speaks mpe");
+    const CLAP_DESCRIPTION: Option<&'static str> = Some("a quartertone piano roll that speaks mpe");
     const CLAP_MANUAL_URL: Option<&'static str> = Some(Self::URL);
     const CLAP_SUPPORT_URL: Option<&'static str> = None;
     const CLAP_FEATURES: &'static [ClapFeature] = &[

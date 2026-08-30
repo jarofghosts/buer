@@ -599,10 +599,8 @@ fn header(
         // The mark, turning with the playhead: the wheel doing what a wheel does, and the transport
         // light the header needed anyway.
         let radius = metrics.at(11.0);
-        let (rect, _) = ui.allocate_exact_size(
-            egui::vec2(radius * 2.2, radius * 2.2),
-            egui::Sense::hover(),
-        );
+        let (rect, _) =
+            ui.allocate_exact_size(egui::vec2(radius * 2.2, radius * 2.2), egui::Sense::hover());
         let running = shared.running.load(Ordering::Relaxed);
         let length = editor.bank.pattern(editor.slot).length.max(1) as f32;
         let phase = if running {
@@ -1155,15 +1153,14 @@ fn scale(
         }
 
         ui.add_space(metrics.at(SECTION_GAP));
-        let chosen = state.scale_choice.min(scales::BUILTIN.len().saturating_sub(1));
+        let chosen = state
+            .scale_choice
+            .min(scales::BUILTIN.len().saturating_sub(1));
         egui::ComboBox::from_id_salt("built-in scale")
             .selected_text(scales::BUILTIN[chosen].0)
             .show_ui(ui, |ui| {
                 for (index, (name, _)) in scales::BUILTIN.iter().enumerate() {
-                    if ui
-                        .selectable_label(index == chosen, *name)
-                        .clicked()
-                    {
+                    if ui.selectable_label(index == chosen, *name).clicked() {
                         state.scale_choice = index;
                     }
                 }
@@ -1278,9 +1275,13 @@ fn randomise(
         match &mut spec.shape {
             Shape::Free { density, rest } => {
                 ui.label(egui::RichText::new("density").small().weak());
-                edited |= ui.add(egui::Slider::new(density, 0.0..=1.0).show_value(false)).changed();
+                edited |= ui
+                    .add(egui::Slider::new(density, 0.0..=1.0).show_value(false))
+                    .changed();
                 ui.label(egui::RichText::new("rests").small().weak());
-                edited |= ui.add(egui::Slider::new(rest, 0.0..=1.0).show_value(false)).changed();
+                edited |= ui
+                    .add(egui::Slider::new(rest, 0.0..=1.0).show_value(false))
+                    .changed();
             }
             Shape::Euclid {
                 steps,
@@ -1292,7 +1293,9 @@ fn randomise(
                 ui.label(egui::RichText::new("pulses").small().weak());
                 edited |= ui.add(egui::DragValue::new(pulses).range(0..=64)).changed();
                 ui.label(egui::RichText::new("rotate").small().weak());
-                edited |= ui.add(egui::DragValue::new(rotation).range(0..=63)).changed();
+                edited |= ui
+                    .add(egui::DragValue::new(rotation).range(0..=63))
+                    .changed();
                 // The rhythm itself, so the numbers are not the only way to read it.
                 let mask = generate::euclid(*steps, (*pulses).min(*steps), *rotation);
                 let drawn: String = (0..(*steps).min(64))
@@ -1320,14 +1323,18 @@ fn randomise(
         ui.add_space(metrics.at(SECTION_GAP));
         ui.label(egui::RichText::new("range").small().weak());
         edited |= ui
-            .add(egui::DragValue::new(&mut spec.low).range(0..=255).custom_formatter(
-                |value, _| pitch::describe(value as u8),
-            ))
+            .add(
+                egui::DragValue::new(&mut spec.low)
+                    .range(0..=255)
+                    .custom_formatter(|value, _| pitch::describe(value as u8)),
+            )
             .changed();
         edited |= ui
-            .add(egui::DragValue::new(&mut spec.high).range(0..=255).custom_formatter(
-                |value, _| pitch::describe(value as u8),
-            ))
+            .add(
+                egui::DragValue::new(&mut spec.high)
+                    .range(0..=255)
+                    .custom_formatter(|value, _| pitch::describe(value as u8)),
+            )
             .changed();
 
         ui.add_space(metrics.at(SECTION_GAP));
@@ -1938,9 +1945,7 @@ mod tests {
     fn a_drag_is_one_undo_step_however_many_frames_it_took() {
         let before = Bank::default();
         let mut after = before.clone();
-        after
-            .pattern_mut(0)
-            .insert(Note::new(0, 480, 120, 100));
+        after.pattern_mut(0).insert(Note::new(0, 480, 120, 100));
 
         let mut history = History::default();
         history.begin("draw note", &before);

@@ -16,11 +16,25 @@ use crate::pitch;
 /// One channel message, without the timing.
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub enum Message {
-    NoteOn { channel: u8, note: u8, velocity: u8 },
-    NoteOff { channel: u8, note: u8 },
+    NoteOn {
+        channel: u8,
+        note: u8,
+        velocity: u8,
+    },
+    NoteOff {
+        channel: u8,
+        note: u8,
+    },
     /// A 14-bit pitch bend, 8192 being centre.
-    Bend { channel: u8, word: u16 },
-    Cc { channel: u8, cc: u8, value: u8 },
+    Bend {
+        channel: u8,
+        word: u16,
+    },
+    Cc {
+        channel: u8,
+        cc: u8,
+        value: u8,
+    },
 }
 
 /// A message and the tick it lands on.
@@ -57,7 +71,10 @@ pub fn rescale(tick: u32, ppq: u32) -> (u32, bool) {
     let ppq = ppq.max(1) as u64;
     let scaled = tick as u64 * TICKS_PER_BEAT as u64;
     let exact = scaled % ppq == 0;
-    (((scaled + ppq / 2) / ppq).min(u32::MAX as u64) as u32, exact)
+    (
+        ((scaled + ppq / 2) / ppq).min(u32::MAX as u64) as u32,
+        exact,
+    )
 }
 
 /// Read one track's messages as notes.
@@ -82,7 +99,10 @@ pub fn import(events: &[Timed], ppq: u32) -> (Vec<Note>, Report) {
                 state.bend[channel as usize] = word;
                 // A bend on a channel that is already sounding cannot be expressed: the grid holds
                 // a note on one lane for its whole length.
-                if open.iter().any(|(open_channel, ..)| *open_channel == channel) {
+                if open
+                    .iter()
+                    .any(|(open_channel, ..)| *open_channel == channel)
+                {
                     report.bent_while_sounding += 1;
                 }
             }
@@ -96,12 +116,9 @@ pub fn import(events: &[Timed], ppq: u32) -> (Vec<Note>, Report) {
             }
             // A note-on at velocity zero is a note-off, and plenty of files write them that way.
             Message::NoteOn { channel, note, .. } | Message::NoteOff { channel, note } => {
-                let Some(index) = open
-                    .iter()
-                    .rposition(|(open_channel, open_note, ..)| {
-                        *open_channel == channel && *open_note == note
-                    })
-                else {
+                let Some(index) = open.iter().rposition(|(open_channel, open_note, ..)| {
+                    *open_channel == channel && *open_note == note
+                }) else {
                     continue;
                 };
                 let (_, _, start, velocity, pitch) = open.remove(index);
@@ -355,11 +372,7 @@ mod tests {
     fn a_note_bent_a_quarter_tone_sharp_comes_back_on_a_quarter_tone_lane() {
         // ±2 semitones is what a file that declares nothing means, so half a semitone is a quarter
         // of the wheel above centre.
-        let events = vec![
-            bend(0, 0, 8192 + 2048),
-            on(0, 0, 60, 100),
-            off(480, 0, 60),
-        ];
+        let events = vec![bend(0, 0, 8192 + 2048), on(0, 0, 60, 100), off(480, 0, 60)];
         let (notes, report) = import(&events, 480);
         assert_eq!(notes[0].lane, 121);
         assert!(report.worst_cents < 1.0);

@@ -13,9 +13,9 @@
 //! - [`scales`], [`scala`] — which lanes a note may land on, from a built-in set or a scale file
 //! - [`generate`] — free and euclidean pattern generation
 
+pub mod generate;
 pub mod mpeout;
 pub mod pattern;
-pub mod generate;
 pub mod pitch;
 pub mod player;
 pub mod rng;

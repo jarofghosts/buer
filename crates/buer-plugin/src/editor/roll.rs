@@ -116,15 +116,15 @@ impl View {
     /// cannot be read, and that is a size on screen.
     fn zoom_x(&mut self, rect: egui::Rect, anchor: f32, factor: f32, scale: f32) {
         let held = self.tick_at(rect, anchor);
-        self.px_per_tick = (self.px_per_tick * factor)
-            .clamp(MIN_PX_PER_TICK * scale, MAX_PX_PER_TICK * scale);
+        self.px_per_tick =
+            (self.px_per_tick * factor).clamp(MIN_PX_PER_TICK * scale, MAX_PX_PER_TICK * scale);
         self.tick = held - (anchor - rect.left()) / self.px_per_tick;
     }
 
     fn zoom_y(&mut self, rect: egui::Rect, anchor: f32, factor: f32, scale: f32) {
         let held = self.top_lane - (anchor - rect.top()) / self.px_per_lane;
-        self.px_per_lane = (self.px_per_lane * factor)
-            .clamp(MIN_PX_PER_LANE * scale, MAX_PX_PER_LANE * scale);
+        self.px_per_lane =
+            (self.px_per_lane * factor).clamp(MIN_PX_PER_LANE * scale, MAX_PX_PER_LANE * scale);
         self.top_lane = held + (anchor - rect.top()) / self.px_per_lane;
     }
 
@@ -143,15 +143,27 @@ pub enum Gesture {
     None,
     /// Drawing. The note exists already — it is made on the press so it can be seen and heard while
     /// the drag sets its length. `anchor` is the tick the press landed on.
-    Draw { id: NoteId, anchor: u32 },
+    Draw {
+        id: NoteId,
+        anchor: u32,
+    },
     Move {
         grab_tick: i64,
         grab_lane: i32,
         from: Vec<(NoteId, u32, Lane)>,
     },
-    Resize { id: NoteId, start: u32 },
-    Velocity { id: NoteId, from_y: f32, was: u8 },
-    Marquee { from: egui::Pos2 },
+    Resize {
+        id: NoteId,
+        start: u32,
+    },
+    Velocity {
+        id: NoteId,
+        from_y: f32,
+        was: u8,
+    },
+    Marquee {
+        from: egui::Pos2,
+    },
 }
 
 /// What the roll did this frame, for the editor to act on.
@@ -192,12 +204,7 @@ fn snapped_down(tick: f32, snap: u32) -> u32 {
 }
 
 /// Draw the roll and take what the pointer does to it.
-pub fn show(
-    ui: &mut egui::Ui,
-    pattern: &mut Pattern,
-    ctx: &mut Context,
-    height: f32,
-) -> Outcome {
+pub fn show(ui: &mut egui::Ui, pattern: &mut Pattern, ctx: &mut Context, height: f32) -> Outcome {
     let mut outcome = Outcome::default();
     let metrics = ctx.metrics;
     let gutter = metrics.at(GUTTER);
@@ -315,7 +322,13 @@ fn scroll_and_zoom(ui: &egui::Ui, grid: egui::Rect, view: &mut View, length: u32
 }
 
 /// Which note is under a point, and whether the pointer is on its right edge.
-fn hit(pattern: &Pattern, view: &View, grid: egui::Rect, at: egui::Pos2, grab: f32) -> Option<(NoteId, bool)> {
+fn hit(
+    pattern: &Pattern,
+    view: &View,
+    grid: egui::Rect,
+    at: egui::Pos2,
+    grab: f32,
+) -> Option<(NoteId, bool)> {
     let lane = view.lane_at(grid, at.y);
     // Last first, so the note drawn on top is the one taken.
     pattern.notes().iter().rev().find_map(|note| {
@@ -625,7 +638,11 @@ fn paint_grid(ui: &egui::Ui, pattern: &Pattern, ctx: &Context, grid: egui::Rect)
             ));
         }
         let line = egui::Stroke::new(
-            if pitch::is_quarter(lane) { hair * 0.75 } else { hair },
+            if pitch::is_quarter(lane) {
+                hair * 0.75
+            } else {
+                hair
+            },
             if pitch::degree(lane) == 0 {
                 TEXT_FADE
             } else if pitch::is_quarter(lane) {
@@ -635,10 +652,7 @@ fn paint_grid(ui: &egui::Ui, pattern: &Pattern, ctx: &Context, grid: egui::Rect)
             },
         );
         shapes.push(egui::Shape::line_segment(
-            [
-                egui::pos2(grid.left(), top),
-                egui::pos2(grid.right(), top),
-            ],
+            [egui::pos2(grid.left(), top), egui::pos2(grid.right(), top)],
             line,
         ));
     }
@@ -752,7 +766,10 @@ fn lane_column(ui: &egui::Ui, pattern: &mut Pattern, ctx: &Context, rect: egui::
         let top = view.y(rect, lane as f32 + 1.0);
         let row = egui::Rect::from_min_size(
             egui::pos2(rect.left() + hair, top + hair),
-            egui::vec2(rect.width() - hair * 2.0, (view.px_per_lane - hair * 2.0).max(1.0)),
+            egui::vec2(
+                rect.width() - hair * 2.0,
+                (view.px_per_lane - hair * 2.0).max(1.0),
+            ),
         );
         let on = pattern.constraint.contains(lane);
         shapes.push(egui::Shape::rect_filled(
@@ -799,11 +816,7 @@ fn paint_keys(ui: &egui::Ui, ctx: &Context, keys: egui::Rect) {
     // A name needs a row tall enough to hold it. Below that the choice is quietly narrowed rather
     // than obeyed, because a column of overlapping text is worse than no names at all.
     let room = view.px_per_lane >= font.size;
-    let names = if room {
-        ctx.names
-    } else {
-        LaneNames::Octaves
-    };
+    let names = if room { ctx.names } else { LaneNames::Octaves };
 
     for lane in view.lanes_in(keys) {
         let lane = lane as Lane;
@@ -1227,7 +1240,11 @@ mod tests {
                 vec![press(at, false)],
             ],
         );
-        assert_eq!(pattern.notes().len(), 1, "the second click drew another note");
+        assert_eq!(
+            pattern.notes().len(),
+            1,
+            "the second click drew another note"
+        );
     }
 
     #[test]
@@ -1258,8 +1275,16 @@ mod tests {
         assert_eq!(rects.len(), 1, "{rects:?}");
         // A sixteenth wide, and tall enough to see — the whole complaint about the old lane height
         // was that a note came out four pixels tall in a dark fill and read as nothing at all.
-        assert!(rects[0].width() > 15.0, "a beat should be visible: {:?}", rects[0]);
-        assert!(rects[0].height() > 6.0, "a lane should be visible: {:?}", rects[0]);
+        assert!(
+            rects[0].width() > 15.0,
+            "a beat should be visible: {:?}",
+            rects[0]
+        );
+        assert!(
+            rects[0].height() > 6.0,
+            "a lane should be visible: {:?}",
+            rects[0]
+        );
     }
 
     #[test]
@@ -1306,7 +1331,9 @@ mod tests {
         );
         assert!(!names.is_empty(), "no names at all");
         assert!(
-            names.iter().all(|name| name.starts_with('c') && !name.contains('#')),
+            names
+                .iter()
+                .all(|name| name.starts_with('c') && !name.contains('#')),
             "{names:?}"
         );
     }
@@ -1351,9 +1378,14 @@ mod tests {
             px_per_lane: 5.0,
             ..View::default()
         };
-        let names = key_names(&painted_named(&mut pattern, squashed, 1.0, LaneNames::Lanes), 1.0);
+        let names = key_names(
+            &painted_named(&mut pattern, squashed, 1.0, LaneNames::Lanes),
+            1.0,
+        );
         assert!(
-            names.iter().all(|name| !name.contains('#') && !name.ends_with('+')),
+            names
+                .iter()
+                .all(|name| !name.contains('#') && !name.ends_with('+')),
             "{names:?}"
         );
     }
@@ -1369,7 +1401,10 @@ mod tests {
         // A four-bar pattern is four bars, whatever its length happens to be in ticks.
         assert_eq!(BAR, 7680);
         let four_bars = BAR * 4;
-        let numbers: Vec<u32> = (0..four_bars).step_by(BAR as usize).map(|tick| tick / BAR + 1).collect();
+        let numbers: Vec<u32> = (0..four_bars)
+            .step_by(BAR as usize)
+            .map(|tick| tick / BAR + 1)
+            .collect();
         assert_eq!(numbers, vec![1, 2, 3, 4]);
     }
 }

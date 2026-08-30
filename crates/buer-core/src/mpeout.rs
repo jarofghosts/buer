@@ -70,7 +70,10 @@ const RPN_MPE_CONFIGURATION: u8 = 6;
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub enum Out {
     /// A channel pitch bend, normalised so that 0.5 is centre — nih-plug's own convention.
-    Bend { channel: u8, value: f32 },
+    Bend {
+        channel: u8,
+        value: f32,
+    },
     NoteOn {
         voice_id: i32,
         channel: u8,
@@ -90,7 +93,11 @@ pub enum Out {
         note: u8,
         semitones: f32,
     },
-    Cc { channel: u8, cc: u8, value: u8 },
+    Cc {
+        channel: u8,
+        cc: u8,
+        value: u8,
+    },
 }
 
 /// A note that is sounding, and everything needed to stop it.
@@ -210,13 +217,37 @@ impl MpeOut {
     }
 
     fn rpn(&self, channel: u8, rpn: u8, msb: u8, lsb: u8, emit: &mut dyn FnMut(Out)) {
-        emit(Out::Cc { channel, cc: CC_RPN_MSB, value: 0 });
-        emit(Out::Cc { channel, cc: CC_RPN_LSB, value: rpn });
-        emit(Out::Cc { channel, cc: CC_DATA_ENTRY_MSB, value: msb });
-        emit(Out::Cc { channel, cc: CC_DATA_ENTRY_LSB, value: lsb });
+        emit(Out::Cc {
+            channel,
+            cc: CC_RPN_MSB,
+            value: 0,
+        });
+        emit(Out::Cc {
+            channel,
+            cc: CC_RPN_LSB,
+            value: rpn,
+        });
+        emit(Out::Cc {
+            channel,
+            cc: CC_DATA_ENTRY_MSB,
+            value: msb,
+        });
+        emit(Out::Cc {
+            channel,
+            cc: CC_DATA_ENTRY_LSB,
+            value: lsb,
+        });
         // Park the RPN selector, so a later data entry cannot land on this parameter by accident.
-        emit(Out::Cc { channel, cc: CC_RPN_MSB, value: 127 });
-        emit(Out::Cc { channel, cc: CC_RPN_LSB, value: 127 });
+        emit(Out::Cc {
+            channel,
+            cc: CC_RPN_MSB,
+            value: 127,
+        });
+        emit(Out::Cc {
+            channel,
+            cc: CC_RPN_LSB,
+            value: 127,
+        });
     }
 
     /// The 14-bit pitch-bend word a bend of this many semitones is, on a wheel with this range.
@@ -454,7 +485,11 @@ mod tests {
         let mut sorted = channels.clone();
         sorted.sort_unstable();
         sorted.dedup();
-        assert_eq!(sorted.len(), channels.len(), "channels reused: {channels:?}");
+        assert_eq!(
+            sorted.len(),
+            channels.len(),
+            "channels reused: {channels:?}"
+        );
         assert!(channels.iter().all(|&c| (1..=15).contains(&c)));
     }
 
@@ -549,10 +584,26 @@ mod tests {
         assert_eq!(
             events[..4],
             [
-                Out::Cc { channel: 0, cc: 101, value: 0 },
-                Out::Cc { channel: 0, cc: 100, value: 6 },
-                Out::Cc { channel: 0, cc: 6, value: 15 },
-                Out::Cc { channel: 0, cc: 38, value: 0 },
+                Out::Cc {
+                    channel: 0,
+                    cc: 101,
+                    value: 0
+                },
+                Out::Cc {
+                    channel: 0,
+                    cc: 100,
+                    value: 6
+                },
+                Out::Cc {
+                    channel: 0,
+                    cc: 6,
+                    value: 15
+                },
+                Out::Cc {
+                    channel: 0,
+                    cc: 38,
+                    value: 0
+                },
             ]
         );
         // And every member channel is told its bend range.
@@ -591,9 +642,9 @@ mod tests {
             out.note_on(130, 100, emit);
         });
         let first = first.unwrap();
-        assert!(events.iter().any(
-            |e| matches!(e, Out::NoteOff { channel, .. } if *channel == first.channel)
-        ));
+        assert!(events
+            .iter()
+            .any(|e| matches!(e, Out::NoteOff { channel, .. } if *channel == first.channel)));
     }
 
     #[test]

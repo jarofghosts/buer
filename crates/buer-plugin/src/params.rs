@@ -302,8 +302,8 @@ impl StoredScale {
         if self.is_empty() {
             return Ok(None);
         }
-        let scale = ScalaScale::parse(&self.scl)
-            .map_err(|error| format!("{}: {error}", self.name))?;
+        let scale =
+            ScalaScale::parse(&self.scl).map_err(|error| format!("{}: {error}", self.name))?;
         let keymap = if self.kbm.trim().is_empty() {
             None
         } else {
@@ -404,10 +404,9 @@ mod tests {
         let shared = Arc::new(Shared::default());
         let params = BuerParams::new(shared);
         for value in [-48, -25, -1, 0, 1, 24, 48] {
-            let shown = params.transpose.normalized_value_to_string(
-                params.transpose.preview_normalized(value),
-                false,
-            );
+            let shown = params
+                .transpose
+                .normalized_value_to_string(params.transpose.preview_normalized(value), false);
             let back = params
                 .transpose
                 .string_to_normalized_value(&shown)
@@ -472,9 +471,7 @@ mod tests {
     fn an_edit_does_not_look_like_a_restore() {
         let shared = Arc::new(Shared::default());
         let slot = BankSlot::new(shared.clone());
-        let before = shared
-            .generation
-            .load(std::sync::atomic::Ordering::Acquire);
+        let before = shared.generation.load(std::sync::atomic::Ordering::Acquire);
         slot.store(Bank::default());
         assert_eq!(
             shared.generation.load(std::sync::atomic::Ordering::Acquire),

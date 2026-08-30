@@ -382,7 +382,12 @@ mod tests {
     #[test]
     fn a_note_is_clipped_to_the_pattern_rather_than_overrunning_it() {
         let mut pattern = Pattern::empty("p", 1, 4);
-        pattern.insert(Note::new(TICKS_PER_BEAT * 4 - 100, TICKS_PER_BEAT * 4, 60, 100));
+        pattern.insert(Note::new(
+            TICKS_PER_BEAT * 4 - 100,
+            TICKS_PER_BEAT * 4,
+            60,
+            100,
+        ));
         assert_eq!(pattern.notes()[0].end(), pattern.length);
     }
 

@@ -258,7 +258,8 @@ impl Player {
                 let (end, index) = next_off.expect("checked above");
                 let offset = Self::offset(end, from, sample_base, ticks_per_sample, samples);
                 let held = self.sounding[index].take().expect("checked above");
-                self.mpe.note_off(held.voice, &mut |event| emit(offset, event));
+                self.mpe
+                    .note_off(held.voice, &mut |event| emit(offset, event));
             } else if let Some(start) = next_on {
                 let note = pattern.notes()[self.cursor];
                 self.cursor += 1;
@@ -295,7 +296,8 @@ impl Player {
         let Some(slot) = free else { return };
 
         if let Some(stolen) = self.sounding[slot].take() {
-            self.mpe.note_off(stolen.voice, &mut |event| emit(offset, event));
+            self.mpe
+                .note_off(stolen.voice, &mut |event| emit(offset, event));
         }
 
         self.age += 1;
@@ -312,18 +314,13 @@ impl Player {
     fn stop_sounding(&mut self, emit: &mut dyn FnMut(u32, Out), offset: u32) {
         for held in self.sounding.iter_mut() {
             if let Some(held) = held.take() {
-                self.mpe.note_off(held.voice, &mut |event| emit(offset, event));
+                self.mpe
+                    .note_off(held.voice, &mut |event| emit(offset, event));
             }
         }
     }
 
-    fn offset(
-        tick: f64,
-        from: f64,
-        sample_base: f64,
-        ticks_per_sample: f64,
-        samples: u32,
-    ) -> u32 {
+    fn offset(tick: f64, from: f64, sample_base: f64, ticks_per_sample: f64, samples: u32) -> u32 {
         let sample = sample_base + (tick - from).max(0.0) / ticks_per_sample;
         (sample.round().max(0.0) as u32).min(samples.saturating_sub(1))
     }
@@ -363,9 +360,13 @@ mod tests {
         for block in 0..blocks {
             let base = block as u64 * samples as u64;
             let ticks = block as f64 * samples as f64 * tps;
-            player.process(bank, clock(ticks), samples, looping, &mut |offset, event| {
-                events.push((base + offset as u64, event))
-            });
+            player.process(
+                bank,
+                clock(ticks),
+                samples,
+                looping,
+                &mut |offset, event| events.push((base + offset as u64, event)),
+            );
         }
         events
     }
@@ -375,9 +376,9 @@ mod tests {
         events
             .iter()
             .filter_map(|(at, event)| match event {
-                Out::NoteOn {
-                    note, velocity, ..
-                } => Some((*at, *note, (velocity * 127.0).round() as u8)),
+                Out::NoteOn { note, velocity, .. } => {
+                    Some((*at, *note, (velocity * 127.0).round() as u8))
+                }
                 _ => None,
             })
             .collect()
@@ -399,7 +400,11 @@ mod tests {
         let events = run(&mut player, &bank, 60, true);
         let ons = note_ons(&events);
         assert_eq!(ons.len(), 1);
-        assert!((ons[0].0 as i64 - 24_000).abs() <= 1, "landed at {}", ons[0].0);
+        assert!(
+            (ons[0].0 as i64 - 24_000).abs() <= 1,
+            "landed at {}",
+            ons[0].0
+        );
     }
 
     #[test]

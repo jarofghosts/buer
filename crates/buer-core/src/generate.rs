@@ -108,11 +108,12 @@ pub fn generate(length: u32, spec: &Spec) -> Vec<Note> {
     let mut notes = Vec::with_capacity(steps.len());
     for start in steps {
         let lane = pick_lane(&mut rng, spec);
-        let velocity = rng.between(
-            spec.velocity.0.min(spec.velocity.1) as u32,
-            spec.velocity.0.max(spec.velocity.1) as u32,
-        )
-        .clamp(1, 127) as u8;
+        let velocity = rng
+            .between(
+                spec.velocity.0.min(spec.velocity.1) as u32,
+                spec.velocity.0.max(spec.velocity.1) as u32,
+            )
+            .clamp(1, 127) as u8;
         let length_ticks = pick_length(&mut rng, spec, grid);
         notes.push(Note::new(start, length_ticks, lane, velocity));
     }

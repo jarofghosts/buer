@@ -71,8 +71,7 @@ pub fn write(path: &Path, state: PluginState) -> Result<(), String> {
 }
 
 pub fn read(path: &Path) -> Result<PluginState, String> {
-    let bytes =
-        std::fs::read(path).map_err(|e| format!("could not read {}: {e}", label(path)))?;
+    let bytes = std::fs::read(path).map_err(|e| format!("could not read {}: {e}", label(path)))?;
     decode(&bytes)
 }
 

@@ -56,9 +56,7 @@ fn leg(
     stroke: egui::Stroke,
 ) {
     let (out, side) = axes(turns);
-    let at = |along: f32, across: f32| {
-        centre + (out * along + side * across) * radius
-    };
+    let at = |along: f32, across: f32| centre + (out * along + side * across) * radius;
 
     let hip = at(HIP, 0.0);
     let knee = at(KNEE, KNEE_THROW);
@@ -134,7 +132,9 @@ mod tests {
         for shape in shapes {
             match shape {
                 egui::Shape::Path(path) => points.extend(path.points.iter().copied()),
-                egui::Shape::LineSegment { points: pair, .. } => points.extend(pair.iter().copied()),
+                egui::Shape::LineSegment { points: pair, .. } => {
+                    points.extend(pair.iter().copied())
+                }
                 egui::Shape::Circle(circle) => {
                     let r = circle.radius;
                     points.push(circle.center + egui::vec2(r, 0.0));

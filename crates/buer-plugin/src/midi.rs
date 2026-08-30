@@ -6,7 +6,7 @@
 
 use buer_core::pattern::{Bank, Note, Pattern, TICKS_PER_BEAT};
 use buer_core::smf::{self, Message, Report, Timed};
-use midly::num::{u4, u7, u15, u24, u28};
+use midly::num::{u15, u24, u28, u4, u7};
 use midly::{
     Format, Header, MetaMessage, MidiMessage, PitchBend, Smf, Timing, Track, TrackEvent,
     TrackEventKind,
@@ -24,7 +24,8 @@ pub struct Imported {
 }
 
 pub fn read(path: &Path) -> Result<Imported, String> {
-    let bytes = std::fs::read(path).map_err(|error| format!("could not read that file: {error}"))?;
+    let bytes =
+        std::fs::read(path).map_err(|error| format!("could not read that file: {error}"))?;
     let file = Smf::parse(&bytes).map_err(|error| format!("not a readable midi file: {error}"))?;
 
     // A timecode file counts in frames rather than beats. Converting it needs the tempo, which is
@@ -32,9 +33,11 @@ pub fn read(path: &Path) -> Result<Imported, String> {
     let ppq = match file.header.timing {
         Timing::Metrical(ppq) => ppq.as_int() as u32,
         Timing::Timecode(..) => {
-            return Err("that file counts time in smpte frames rather than beats, which buer \
+            return Err(
+                "that file counts time in smpte frames rather than beats, which buer \
                         cannot place on a bar grid"
-                .to_string())
+                    .to_string(),
+            )
         }
     };
 
