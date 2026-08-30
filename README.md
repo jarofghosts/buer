@@ -51,8 +51,10 @@ the velocity lane and the toggle column all agreeing with each other.
   **ctrl+shift**-scroll to zoom the lanes. Zooming keeps whatever is under the pointer still.
 - Anything you draw, move or transpose **sounds once** as you do it. Drawing on a twenty-four-row
   grid without hearing it is guesswork.
-- `ctrl+z` and `ctrl+shift+z`. A whole drag is one step, and a gesture that changed nothing is not a
-  step at all.
+- `ctrl+z` to undo and **`ctrl+y`** to redo. Not `ctrl+shift+z`: the key translation buer reaches
+  the window through has no entry for a shifted letter, so that chord never arrives at all. It is
+  bound anyway, against the day it does. A whole drag is one step, and a gesture that changed
+  nothing is not a step at all.
 
 **names** decides how much of the keyboard down the left is labelled: `octaves` for each c alone,
 `notes` for every semitone with the quarter tones left blank, or `lanes` for all twenty-four. It is

@@ -569,10 +569,17 @@ fn keys(
     let input = ctx.input_mut(|input| Pressed {
         delete: input.key_pressed(egui::Key::Delete) || input.key_pressed(egui::Key::Backspace),
         deselect: input.key_pressed(egui::Key::Escape),
-        // Redo before undo, and struct fields are evaluated in the order they are written: a
-        // consumed chord matches any *extra* modifier, so plain ctrl+z would otherwise claim
-        // ctrl+shift+z on its way past.
-        redo: input.consume_key(command | egui::Modifiers::SHIFT, egui::Key::Z),
+        // ctrl+y, because ctrl+shift+z cannot arrive. egui-baseview translates only lowercase
+        // characters and a shifted letter comes through as `Character("Z")`, which falls off the
+        // end of its table — so no key event is emitted for it at all, and no amount of asking
+        // here would find one. The chord is still claimed, for a backend where it does arrive.
+        //
+        // Redo before undo, and struct fields are evaluated in the order they are written, or
+        // plain ctrl+z would claim ctrl+shift+z on its way past: a consumed chord matches any
+        // *extra* modifier. Both are claimed rather than the first to match — `|`, not `||` —
+        // for the same reason: an unclaimed ctrl+shift+z would go on to undo instead of redo.
+        redo: input.consume_key(command | egui::Modifiers::SHIFT, egui::Key::Z)
+            | input.consume_key(command, egui::Key::Y),
         undo: input.consume_key(command, egui::Key::Z),
         select_all: input.consume_key(command, egui::Key::A),
         copy: input.consume_key(command, egui::Key::C),
