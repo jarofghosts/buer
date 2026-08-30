@@ -101,11 +101,42 @@ impl Shared {
     }
 
     /// Drop whatever the audio thread displaced. Main thread only, once a frame.
+    ///
+    /// Drained rather than taken. `mem::take` leaves a *new* vector behind, with no capacity at
+    /// all, and the preallocation the audio thread pushes into is gone from the first frame the
+    /// editor runs — after which every handoff allocates on the audio thread. The elements are
+    /// moved out under the lock and dropped outside it, which is the point of doing this in two
+    /// steps: a bank is a few hundred kilobytes to free.
     pub fn collect_garbage(&self) {
-        let retired = {
+        let retired: Vec<_> = {
             let mut handoff = self.handoff.lock();
-            std::mem::take(&mut handoff.retired)
+            handoff.retired.drain(..).collect()
         };
         drop(retired);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn collecting_the_garbage_leaves_the_room_the_audio_thread_pushes_into() {
+        let shared = Shared::default();
+        let capacity = shared.handoff.lock().retired.capacity();
+        assert!(capacity >= 8);
+
+        shared
+            .handoff
+            .lock()
+            .retired
+            .push(Arc::new(Bank::default()));
+        shared.collect_garbage();
+
+        let handoff = shared.handoff.lock();
+        assert!(handoff.retired.is_empty());
+        // The whole invariant: `poll_handoff` only pushes while there is room, so a vector that
+        // came back with no capacity is one it can never park anything in without allocating.
+        assert_eq!(handoff.retired.capacity(), capacity);
     }
 }

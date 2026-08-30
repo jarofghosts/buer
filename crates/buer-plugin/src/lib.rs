@@ -92,7 +92,10 @@ impl Buer {
         };
         if let Some(bank) = handoff.incoming_bank.take() {
             let retired = std::mem::replace(&mut self.bank, bank);
-            if handoff.retired.len() < handoff.retired.capacity().max(8) {
+            // Only while there is room, so the push cannot grow the vector. `.max(8)` used to be
+            // here and was the opposite of a floor: on a vector with no capacity it read as room
+            // for eight and allocated on the first push.
+            if handoff.retired.len() < handoff.retired.capacity() {
                 handoff.retired.push(retired);
             }
         }
