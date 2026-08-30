@@ -1,0 +1,23 @@
+name: ci
+
+# Formatting only, and deliberately so: rustfmt's defaults became the style in
+# d89eaee, and two formatters in one tree is the thing that commit was for.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  fmt:
+    name: fmt
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      # Nothing is compiled here, so this needs neither the Linux build
+      # dependencies the bundle job installs nor a cargo cache.
+      - name: Check formatting
+        run: cargo fmt --all --check
