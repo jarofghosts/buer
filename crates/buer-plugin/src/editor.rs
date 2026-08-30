@@ -8,7 +8,7 @@ pub mod icon;
 pub mod roll;
 
 use buer_core::generate::{self, Shape, Spec};
-use buer_core::pattern::{Bank, LaneMask, NoteId, SLOTS};
+use buer_core::pattern::{Bank, LaneMask, NoteId, Pattern, SLOTS};
 use buer_core::{pitch, scales, TICKS_PER_BEAT};
 use nih_plug::params::persist::PersistentField;
 use nih_plug::prelude::*;
@@ -245,6 +245,9 @@ struct EditorState {
     export_repeats: u32,
     /// Whether the settings menu is open over the window.
     settings_open: bool,
+    /// The pattern last copied, if any. One deep, and it lives as long as the window: a paste is a
+    /// gesture rather than something a project should carry.
+    clipboard: Option<Pattern>,
 }
 
 impl Default for EditorState {
@@ -269,6 +272,7 @@ impl Default for EditorState {
             export_bank: false,
             export_repeats: 1,
             settings_open: false,
+            clipboard: None,
         }
     }
 }
@@ -425,6 +429,35 @@ fn commit(state: &mut EditorState, params: &Arc<BuerParams>) {
     params.bank.store(state.bank.clone());
 }
 
+/// Copy the pattern being edited.
+fn copy_pattern(state: &mut EditorState, shared: &Arc<Shared>) {
+    let slot = state.slot;
+    state.clipboard = Some(state.bank.pattern(slot).clone());
+    shared.set_status(format!("copied pattern {}", slot + 1));
+}
+
+/// Paste it over whatever is in the slot being edited.
+///
+/// Over, not into: a pattern is a whole thing — its length and its lanes as much as its notes — and
+/// a paste that merged the notes into what was already there would be the one gesture that cannot
+/// be undone by pasting something else. `ctrl+z` is the way back.
+fn paste_pattern(state: &mut EditorState, params: &Arc<BuerParams>, shared: &Arc<Shared>) {
+    let Some(copied) = state.clipboard.clone() else {
+        shared.set_status("nothing has been copied yet");
+        return;
+    };
+
+    let before = state.bank.clone();
+    let slot = state.slot;
+    state.bank.pattern_mut(slot).take_contents(&copied);
+    let after = state.bank.clone();
+    state.history.once("paste a pattern", &before, &after);
+    // The notes were given fresh ids on the way in, so nothing the selection names is there now.
+    state.selection.clear();
+    commit(state, params);
+    shared.set_status(format!("pasted into pattern {}", slot + 1));
+}
+
 fn roll_height(ui: &egui::Ui, state: &EditorState, metrics: Metrics) -> f32 {
     let available = ui.available_height();
     let panels = state
@@ -516,23 +549,36 @@ fn keys(
     }
 
     /// Only the keys this answers to. Taking a copy of the whole `InputState` instead would carry
-    /// every event of the frame with it, sixty times a second, to read four booleans out of.
+    /// every event of the frame with it, sixty times a second, to read seven booleans out of.
+    ///
+    /// A chord is claimed with `consume_key` rather than read against `input.modifiers`, which is
+    /// the modifier state at the *end* of the frame: press and release ctrl inside one frame — a
+    /// fast hand, or a frame that spans a while because nothing is running — and the chord is
+    /// already gone by the time it is looked at. Each key event carries the modifiers that were
+    /// held when it happened, which is the thing actually being asked about.
     struct Pressed {
-        modifiers: egui::Modifiers,
         delete: bool,
-        select_all: bool,
-        undo: bool,
         deselect: bool,
+        redo: bool,
+        undo: bool,
+        select_all: bool,
+        copy: bool,
+        paste: bool,
     }
-    let input = ctx.input(|input| Pressed {
-        modifiers: input.modifiers,
+    let command = egui::Modifiers::COMMAND;
+    let input = ctx.input_mut(|input| Pressed {
         delete: input.key_pressed(egui::Key::Delete) || input.key_pressed(egui::Key::Backspace),
-        select_all: input.key_pressed(egui::Key::A),
-        undo: input.key_pressed(egui::Key::Z),
         deselect: input.key_pressed(egui::Key::Escape),
+        // Redo before undo, and struct fields are evaluated in the order they are written: a
+        // consumed chord matches any *extra* modifier, so plain ctrl+z would otherwise claim
+        // ctrl+shift+z on its way past.
+        redo: input.consume_key(command | egui::Modifiers::SHIFT, egui::Key::Z),
+        undo: input.consume_key(command, egui::Key::Z),
+        select_all: input.consume_key(command, egui::Key::A),
+        copy: input.consume_key(command, egui::Key::C),
+        paste: input.consume_key(command, egui::Key::V),
     });
 
-    let modifiers = input.modifiers;
     let mut changed = None;
 
     if input.delete && !state.selection.is_empty() {
@@ -553,7 +599,7 @@ fn keys(
         state.selection.clear();
     }
 
-    if modifiers.command && input.select_all {
+    if input.select_all {
         state.selection = state
             .bank
             .pattern(state.slot)
@@ -563,9 +609,17 @@ fn keys(
             .collect();
     }
 
-    if modifiers.command && input.undo {
+    if input.copy {
+        copy_pattern(state, shared);
+    }
+
+    if input.paste {
+        paste_pattern(state, params, shared);
+    }
+
+    if input.undo || input.redo {
         let current = state.bank.clone();
-        let step = if modifiers.shift {
+        let step = if input.redo {
             state.history.redo(&current).map(|step| (step, "redid"))
         } else {
             state.history.undo(&current).map(|step| (step, "undid"))
@@ -744,6 +798,15 @@ fn bank_strip(
         let mut follow = state.follow;
         if ui.checkbox(&mut follow, "follow").changed() {
             state.follow = follow;
+        }
+        if ui.button("copy").clicked() {
+            copy_pattern(state, shared);
+        }
+        if ui
+            .add_enabled(state.clipboard.is_some(), egui::Button::new("paste"))
+            .clicked()
+        {
+            paste_pattern(state, params, shared);
         }
         if ui.button("clear").clicked() {
             let before = state.bank.clone();

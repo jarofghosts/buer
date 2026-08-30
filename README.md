@@ -96,6 +96,11 @@ Sixteen slots in one instance. The strip shows each as a thumbnail of its notes;
 slot being edited and the **outline** is the slot sounding, which are frequently not the same one.
 `follow` ties them together.
 
+**copy** takes the slot being edited — its notes, its length and its lanes — and **paste** puts all
+of it over whatever is in the slot you paste into, which is one `ctrl+z` step. `ctrl+c` and `ctrl+v`
+do the same. The name is the one thing that does not travel: it is the slot's own, and it becomes
+the track name on export. The clipboard is one pattern deep and lasts as long as the window.
+
 `pattern` is a real parameter, so a host can record and automate a change of slot — which is what
 makes a bank more than a filing cabinet. A change takes effect **at the loop point**, so nothing is
 cut in half; while stopped it takes effect at once.

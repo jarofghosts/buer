@@ -250,6 +250,21 @@ impl Pattern {
         }
     }
 
+    /// Take everything another pattern holds, except its name.
+    ///
+    /// The name stays the slot's own: it becomes the track name on export, and a bank whose tracks
+    /// are all called `1` is not what copying a pattern into slot five meant. The notes arrive
+    /// through [`Pattern::insert`] like any others, so they are given fresh ids here rather than
+    /// carrying the ones they had where they were copied from — two patterns are never asked to
+    /// agree about a name, and the selection in one cannot then point into the other.
+    pub fn take_contents(&mut self, from: &Pattern) {
+        self.length = from.length;
+        self.constraint = from.constraint;
+        self.scale.clone_from(&from.scale);
+        // Length first, so nothing is clipped on the way in.
+        self.replace(from.notes.iter().copied());
+    }
+
     /// Change the loop point, dropping and clipping whatever no longer fits.
     pub fn set_length(&mut self, length: u32) {
         self.length = length.max(TICKS_PER_BEAT);
@@ -485,6 +500,56 @@ mod tests {
         // Inserting before it moves it down the vector; the name must not follow the index.
         pattern.insert(Note::new(0, 240, 60, 100));
         assert_eq!(pattern.find(id).unwrap().start, 1920);
+    }
+
+    #[test]
+    fn a_copied_pattern_arrives_whole_but_under_the_name_it_is_copied_onto() {
+        let mut from = Pattern::empty("rast", 2, 4);
+        from.constraint = LaneMask(0b1010_1101);
+        from.scale = "rast on c".to_string();
+        from.insert(Note::new(0, 240, 60, 100));
+        from.insert(Note::new(1920, 240, 67, 90));
+
+        let mut onto = Pattern::empty("5", 4, 4);
+        onto.insert(Note::new(0, 240, 40, 64));
+        onto.take_contents(&from);
+
+        assert_eq!(onto.name, "5");
+        assert_eq!(onto.length, from.length);
+        assert_eq!(onto.constraint, from.constraint);
+        assert_eq!(onto.scale, "rast on c");
+        let notes: Vec<_> = onto
+            .notes()
+            .iter()
+            .map(|n| (n.start, n.length, n.lane, n.velocity))
+            .collect();
+        assert_eq!(notes, vec![(0, 240, 60, 100), (1920, 240, 67, 90)]);
+    }
+
+    #[test]
+    fn a_copied_pattern_longer_than_the_one_it_lands_on_keeps_every_note() {
+        // The length has to arrive before the notes do, or `insert` clips them to the old one.
+        let mut from = Pattern::empty("long", 4, 4);
+        from.insert(Note::new(TICKS_PER_BEAT * 15, 240, 60, 100));
+        let mut onto = Pattern::empty("short", 1, 4);
+        onto.take_contents(&from);
+        assert_eq!(onto.notes().len(), 1);
+        assert_eq!(onto.notes()[0].start, TICKS_PER_BEAT * 15);
+    }
+
+    #[test]
+    fn a_pasted_note_is_given_a_name_of_its_own() {
+        let mut from = Pattern::empty("from", 1, 4);
+        from.insert(Note::new(0, 240, 60, 100));
+        let mut onto = Pattern::empty("onto", 1, 4);
+        // Two notes already handed out here, so the ids cannot line up by accident.
+        onto.insert(Note::new(0, 240, 40, 64));
+        onto.insert(Note::new(240, 240, 41, 64));
+        onto.take_contents(&from);
+
+        let id = onto.notes()[0].id;
+        assert_ne!(id, 0);
+        assert_eq!(onto.find(id).unwrap().lane, 60);
     }
 
     #[test]
