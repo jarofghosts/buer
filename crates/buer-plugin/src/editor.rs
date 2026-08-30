@@ -1620,7 +1620,9 @@ fn randomise(
         );
         // A new seed is rolled here and nowhere else: generation stays a pure function of the spec,
         // so the number on screen is always the number that made what you are looking at.
-        if ui.button("⚄").on_hover_text("roll a new seed").clicked() {
+        // 🎲 rather than ⚄, which the fonts egui ships have no glyph for: the seed roller wore an
+        // empty box until `every_symbol_a_button_wears_is_one_the_font_has` went looking.
+        if ui.button("🎲").on_hover_text("roll a new seed").clicked() {
             spec.seed = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .map(|since| since.as_nanos() as u64)
@@ -2274,6 +2276,24 @@ mod tests {
             history.once("draw note", &before, &after);
         }
         assert_eq!(history.past.len(), HISTORY_DEPTH);
+    }
+
+    /// Every symbol the interface wears on a button, against the fonts egui ships.
+    ///
+    /// A glyph the font does not have is drawn as a box, which is not something a test of the
+    /// arithmetic would ever notice and not something a screenshot is taken often enough to catch.
+    #[test]
+    fn every_symbol_a_button_wears_is_one_the_font_has() {
+        let ctx = egui::Context::default();
+        // The fonts are built on the first pass, not before it.
+        let _ = ctx.run(egui::RawInput::default(), |_| {});
+        let font = egui::TextStyle::Button.resolve(&ctx.style());
+        for symbol in ["⏺ record", "◀", "rest", "⏮", "🎲", "−", "+"] {
+            assert!(
+                ctx.fonts(|fonts| fonts.has_glyphs(&font, symbol)),
+                "{symbol:?} would be drawn as a box"
+            );
+        }
     }
 
     #[test]
