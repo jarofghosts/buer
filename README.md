@@ -54,6 +54,11 @@ the velocity lane and the toggle column all agreeing with each other.
 - `ctrl+z` and `ctrl+shift+z`. A whole drag is one step, and a gesture that changed nothing is not a
   step at all.
 
+**names** decides how much of the keyboard down the left is labelled: `octaves` for each c alone,
+`notes` for every semitone with the quarter tones left blank, or `lanes` for all twenty-four. It is
+saved with the instance. Zoomed out past the point where a row can hold a name it narrows back to
+the octaves on its own, because a column of overlapping text is worse than no names at all.
+
 **snap** and **length** are the two chip rows above the roll. `length: draw` means a note starts one
 snap long and the drag sets the rest; any other choice makes a click exactly that long. Dragging
 always overrides either.

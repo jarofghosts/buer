@@ -15,6 +15,7 @@ use buer_core::pitch;
 use nih_plug_egui::egui;
 
 use super::{Metrics, ACCENT, ACCENT_BRIGHT, ACCENT_FILL, TEXT, TEXT_FADE};
+use crate::params::LaneNames;
 
 /// Width of the keyboard down the left edge.
 pub const GUTTER: f32 = 52.0;
@@ -175,6 +176,7 @@ pub struct Context<'a> {
     pub draw_length: u32,
     /// Where the playhead is, or `None` when nothing is running.
     pub playhead: Option<f32>,
+    pub names: LaneNames,
     pub metrics: Metrics,
 }
 
@@ -785,7 +787,14 @@ fn paint_keys(ui: &egui::Ui, ctx: &Context, keys: egui::Rect) {
     painter.rect_filled(keys, egui::CornerRadius::ZERO, visuals.faint_bg_color);
     let hair = ctx.metrics.at(1.0).max(1.0);
     let font = egui::FontId::monospace(egui::TextStyle::Small.resolve(ui.style()).size);
-    let named = view.px_per_lane >= 7.0;
+    // A name needs a row tall enough to hold it. Below that the choice is quietly narrowed rather
+    // than obeyed, because a column of overlapping text is worse than no names at all.
+    let room = view.px_per_lane >= font.size;
+    let names = if room {
+        ctx.names
+    } else {
+        LaneNames::Octaves
+    };
 
     for lane in view.lanes_in(keys) {
         let lane = lane as Lane;
@@ -808,15 +817,24 @@ fn paint_keys(ui: &egui::Ui, ctx: &Context, keys: egui::Rect) {
             egui::CornerRadius::ZERO,
             fill,
         );
-        if named && pitch::degree(lane) == 0 {
-            painter.text(
-                egui::pos2(keys.right() - ctx.metrics.at(2.0), row.center().y),
-                egui::Align2::RIGHT_CENTER,
-                pitch::describe(lane),
-                font.clone(),
-                TEXT,
-            );
+
+        if !names.names(lane) || (!room && pitch::degree(lane) != 0) {
+            continue;
         }
+        // A name sits on whichever key it belongs to, so it takes that key's contrast: dark on the
+        // white ones, light on the black ones and on the quarter-tone stubs between them.
+        let ink = if pitch::is_quarter(lane) || pitch::is_black(lane) {
+            TEXT
+        } else {
+            egui::Color32::from_gray(24)
+        };
+        painter.text(
+            egui::pos2(keys.right() - ctx.metrics.at(2.0), row.center().y),
+            egui::Align2::RIGHT_CENTER,
+            pitch::describe(lane),
+            font.clone(),
+            ink,
+        );
     }
 }
 
@@ -1042,6 +1060,15 @@ mod tests {
     /// egui will run headless, which makes the drawing testable at all: "is a note on screen" is
     /// otherwise a question only a person with the plugin open can answer.
     fn painted(pattern: &mut Pattern, view: View, scale: f32) -> Vec<egui::Shape> {
+        painted_named(pattern, view, scale, LaneNames::Octaves)
+    }
+
+    fn painted_named(
+        pattern: &mut Pattern,
+        view: View,
+        scale: f32,
+        names: LaneNames,
+    ) -> Vec<egui::Shape> {
         let ctx = egui::Context::default();
         let input = egui::RawInput {
             screen_rect: Some(egui::Rect::from_min_size(
@@ -1063,6 +1090,7 @@ mod tests {
                     snap: 480,
                     draw_length: 480,
                     playhead: None,
+                    names,
                     metrics: Metrics::for_test(scale),
                 };
                 show(ui, pattern, &mut context, 560.0);
@@ -1125,6 +1153,7 @@ mod tests {
                         snap: 480,
                         draw_length,
                         playhead: None,
+                        names: LaneNames::Octaves,
                         metrics: Metrics::for_test(1.0),
                     };
                     show(ui, pattern, &mut context, 560.0);
@@ -1242,6 +1271,81 @@ mod tests {
         assert!(
             large > small * 1.8,
             "a note is {large} points tall at 200 % against {small} at 100 %"
+        );
+    }
+
+    /// The names painted on the keyboard, which is everything left of the grid.
+    fn key_names(shapes: &[egui::Shape], scale: f32) -> Vec<String> {
+        let gutter = (MASK + GUTTER) * scale;
+        shapes
+            .iter()
+            .filter_map(|shape| match shape {
+                egui::Shape::Text(text) if text.pos.x < gutter => {
+                    Some(text.galley.text().to_string())
+                }
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn naming_the_octaves_names_the_cs_and_nothing_else() {
+        let mut pattern = Pattern::empty("p", 4, 4);
+        let names = key_names(
+            &painted_named(&mut pattern, View::default(), 1.0, LaneNames::Octaves),
+            1.0,
+        );
+        assert!(!names.is_empty(), "no names at all");
+        assert!(
+            names.iter().all(|name| name.starts_with('c') && !name.contains('#')),
+            "{names:?}"
+        );
+    }
+
+    #[test]
+    fn naming_the_notes_names_every_semitone_and_no_quarter_tone() {
+        let mut pattern = Pattern::empty("p", 4, 4);
+        let names = key_names(
+            &painted_named(&mut pattern, View::default(), 1.0, LaneNames::Notes),
+            1.0,
+        );
+        assert!(names.iter().any(|name| name.contains('#')), "{names:?}");
+        assert!(!names.iter().any(|name| name.ends_with('+')), "{names:?}");
+    }
+
+    #[test]
+    fn naming_the_lanes_names_the_quarter_tones_too() {
+        let mut pattern = Pattern::empty("p", 4, 4);
+        let octaves = key_names(
+            &painted_named(&mut pattern, View::default(), 1.0, LaneNames::Octaves),
+            1.0,
+        );
+        let notes = key_names(
+            &painted_named(&mut pattern, View::default(), 1.0, LaneNames::Notes),
+            1.0,
+        );
+        let lanes = key_names(
+            &painted_named(&mut pattern, View::default(), 1.0, LaneNames::Lanes),
+            1.0,
+        );
+        assert!(lanes.iter().any(|name| name.ends_with('+')), "{lanes:?}");
+        assert!(lanes.len() > notes.len());
+        assert!(notes.len() > octaves.len());
+    }
+
+    #[test]
+    fn a_row_too_short_to_hold_a_name_is_not_given_one() {
+        // Zoomed out past legibility the choice is narrowed back to the octaves rather than obeyed:
+        // a column of overlapping text is worse than no names at all.
+        let mut pattern = Pattern::empty("p", 4, 4);
+        let squashed = View {
+            px_per_lane: 5.0,
+            ..View::default()
+        };
+        let names = key_names(&painted_named(&mut pattern, squashed, 1.0, LaneNames::Lanes), 1.0);
+        assert!(
+            names.iter().all(|name| !name.contains('#') && !name.ends_with('+')),
+            "{names:?}"
         );
     }
 

@@ -26,6 +26,39 @@ pub const UI_SCALES: [f32; 6] = [1.0, 1.25, 1.5, 1.75, 2.0, 2.5];
 /// may size for the scale it is about to draw at.
 pub const DEFAULT_WINDOW: (u32, u32) = (1000, 720);
 
+/// How much of the keyboard down the left of the roll is named.
+///
+/// Twenty-four rows to the octave is a lot of rows to count, and naming every one of them is a lot
+/// of text beside a grid you are trying to read. So it is a choice, and it is remembered.
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum LaneNames {
+    /// Only each c, which is enough to find your place.
+    #[default]
+    Octaves,
+    /// Every semitone. The quarter tones between them stay blank, so the twelve you already know
+    /// are still the ones that stand out.
+    Notes,
+    /// Every lane, quarter tones included.
+    Lanes,
+}
+
+impl LaneNames {
+    /// Whether this lane gets a name, given that there is room for one.
+    pub fn names(self, lane: buer_core::Lane) -> bool {
+        match self {
+            LaneNames::Octaves => buer_core::pitch::degree(lane) == 0,
+            LaneNames::Notes => !buer_core::pitch::is_quarter(lane),
+            LaneNames::Lanes => true,
+        }
+    }
+
+    pub const ALL: [(&'static str, LaneNames); 3] = [
+        ("octaves", LaneNames::Octaves),
+        ("notes", LaneNames::Notes),
+        ("lanes", LaneNames::Lanes),
+    ];
+}
+
 /// Which dialect the quarter tone leaves in.
 #[derive(Enum, Debug, PartialEq, Eq, Clone, Copy)]
 pub enum PitchOutParam {
@@ -145,6 +178,9 @@ pub struct BuerParams {
     /// Until it is, the editor follows the host's own scaling.
     #[persist = "uiscaleset"]
     pub ui_scale_set: RwLock<bool>,
+    /// How much of the keyboard is named. A view setting, but one worth outliving the window.
+    #[persist = "names"]
+    pub lane_names: RwLock<LaneNames>,
 }
 
 impl BuerParams {
@@ -208,6 +244,7 @@ impl BuerParams {
             editor_state: EguiState::from_size(DEFAULT_WINDOW.0, DEFAULT_WINDOW.1),
             ui_scale: RwLock::new(UI_SCALES[0]),
             ui_scale_set: RwLock::new(false),
+            lane_names: RwLock::new(LaneNames::default()),
         }
     }
 
@@ -339,6 +376,28 @@ impl<'a> PersistentField<'a, Bank> for BankSlot {
 mod tests {
     use super::*;
     use buer_core::{Note, TICKS_PER_BEAT};
+
+    #[test]
+    fn naming_the_octaves_names_only_the_cs() {
+        // c4 is lane 120, c#4 is 122, and 121 is the quarter tone between them.
+        assert!(LaneNames::Octaves.names(120));
+        assert!(!LaneNames::Octaves.names(121));
+        assert!(!LaneNames::Octaves.names(122));
+    }
+
+    #[test]
+    fn naming_the_notes_leaves_the_quarter_tones_blank() {
+        assert!(LaneNames::Notes.names(120));
+        assert!(!LaneNames::Notes.names(121));
+        assert!(LaneNames::Notes.names(122));
+    }
+
+    #[test]
+    fn naming_the_lanes_names_all_of_them() {
+        for lane in 0..24 {
+            assert!(LaneNames::Lanes.names(lane));
+        }
+    }
 
     #[test]
     fn a_value_typed_back_in_is_the_value_that_was_shown() {

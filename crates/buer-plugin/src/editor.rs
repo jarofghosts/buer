@@ -22,7 +22,7 @@ use std::sync::Arc;
 
 use crate::display;
 use crate::midi;
-use crate::params::{BuerParams, ClockParam, StoredScale, DEFAULT_WINDOW, UI_SCALES};
+use crate::params::{BuerParams, ClockParam, LaneNames, StoredScale, DEFAULT_WINDOW, UI_SCALES};
 use crate::project;
 use crate::shared::Shared;
 
@@ -449,6 +449,7 @@ fn show_roll(
 
     let snap = state.snap;
     let draw_length = state.draw_length();
+    let names = *params.lane_names.read();
     let slot = state.slot;
     // The before-image for the undo stack, taken only on the frame a press could start a gesture.
     // Cloning the bank every frame to have one ready would be sixty copies a second of something
@@ -471,6 +472,7 @@ fn show_roll(
             snap,
             draw_length,
             playhead,
+            names,
             metrics,
         };
         roll::show(ui, bank.pattern_mut(slot), &mut context, height)
@@ -763,6 +765,15 @@ fn roll_controls(
         for (name, ticks) in DIVISIONS {
             chip(ui, name, state.draw_length == Some(ticks), || {
                 state.draw_length = Some(ticks)
+            });
+        }
+
+        ui.add_space(metrics.at(SECTION_GAP));
+        ui.label(egui::RichText::new("names").small().weak());
+        let current = *params.lane_names.read();
+        for (label, option) in LaneNames::ALL {
+            chip(ui, label, current == option, || {
+                *params.lane_names.write() = option
             });
         }
 
