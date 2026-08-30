@@ -177,6 +177,8 @@ pub struct Outcome {
     pub changed: bool,
     /// A note to sound once, so you hear the lane you landed on.
     pub audition: Option<Note>,
+    /// The ruler was clicked, and this is where the pads should write from now on.
+    pub entry: Option<u32>,
 }
 
 /// Everything the roll needs that is not the pattern itself.
@@ -188,6 +190,9 @@ pub struct Context<'a> {
     pub draw_length: u32,
     /// Where the playhead is, or `None` when nothing is running.
     pub playhead: Option<f32>,
+    /// Where the pads write, or `None` when they are not the way notes are going in. Drawn as a
+    /// mark, and moved by clicking the ruler.
+    pub entry: Option<u32>,
     pub names: LaneNames,
     pub metrics: Metrics,
 }
@@ -267,6 +272,20 @@ pub fn show(ui: &mut egui::Ui, pattern: &mut Pattern, ctx: &mut Context, height:
         &mut outcome,
     );
 
+    // The ruler places the mark the pads write at — and only while there is one, so that the strip
+    // is inert in every other way of working. Snapped to the step rather than to the snap: the mark
+    // moves in steps, and a mark left between two of them would stay between them for good.
+    if ctx.entry.is_some() {
+        let ruler = ui.interact(ruler_rect, ui.id().with("roll ruler"), egui::Sense::click());
+        if let Some(at) = ruler.interact_pointer_pos() {
+            if ruler.clicked() {
+                let step = ctx.draw_length.max(1);
+                let tick = ctx.view.tick_at(ruler_rect, at.x).max(0.0) as u32;
+                outcome.entry = Some((tick / step * step).min(pattern.length.saturating_sub(1)));
+            }
+        }
+    }
+
     paint_grid(ui, pattern, ctx, grid);
     paint_notes(ui, pattern, ctx, grid);
     paint_keys(ui, ctx, keys);
@@ -277,6 +296,7 @@ pub fn show(ui: &mut egui::Ui, pattern: &mut Pattern, ctx: &mut Context, height:
     }
     paint_ruler(ui, pattern, ctx, ruler_rect);
     paint_velocity(ui, pattern, ctx, velocity_rect);
+    paint_entry(ui, ctx, grid, ruler_rect);
     paint_playhead(ui, ctx, grid, ruler_rect);
 
     outcome
@@ -289,7 +309,7 @@ pub fn show(ui: &mut egui::Ui, pattern: &mut Pattern, ctx: &mut Context, height:
 /// means nothing stops them answering *through* something floating over the roll — the settings
 /// menu, a combo box — which is what the layer settles. Nothing on top reads as `None`: an area is
 /// in the order, and the roll's own background layer is not.
-fn pointer_in(ui: &egui::Ui, rect: egui::Rect) -> Option<egui::Pos2> {
+pub(super) fn pointer_in(ui: &egui::Ui, rect: egui::Rect) -> Option<egui::Pos2> {
     let at = ui.ctx().pointer_latest_pos()?;
     let covered = ui
         .ctx()
@@ -942,6 +962,35 @@ fn paint_velocity(ui: &egui::Ui, pattern: &Pattern, ctx: &Context, rect: egui::R
     painter.extend(shapes);
 }
 
+/// Where the pads write next: a plain line and a flag in the ruler.
+///
+/// Deliberately not the accent colour. The playhead is where the pattern *is* and the mark is where
+/// the next note goes, and two orange lines on one grid would be one line too many to read.
+fn paint_entry(ui: &egui::Ui, ctx: &Context, grid: egui::Rect, ruler: egui::Rect) {
+    let Some(entry) = ctx.entry else {
+        return;
+    };
+    let x = ctx.view.x(grid, entry as f32);
+    if x < grid.left() || x > grid.right() {
+        return;
+    }
+    let painter = ui.painter_at(egui::Rect::from_min_max(ruler.min, grid.max));
+    painter.line_segment(
+        [egui::pos2(x, ruler.top()), egui::pos2(x, grid.bottom())],
+        egui::Stroke::new(ctx.metrics.at(1.0).max(1.0), TEXT),
+    );
+    let flag = ctx.metrics.at(4.0);
+    painter.add(egui::Shape::convex_polygon(
+        vec![
+            egui::pos2(x - flag, ruler.top()),
+            egui::pos2(x + flag, ruler.top()),
+            egui::pos2(x, ruler.top() + flag * 1.6),
+        ],
+        TEXT,
+        egui::Stroke::NONE,
+    ));
+}
+
 fn paint_playhead(ui: &egui::Ui, ctx: &Context, grid: egui::Rect, ruler: egui::Rect) {
     let Some(position) = ctx.playhead else {
         return;
@@ -1112,6 +1161,7 @@ mod tests {
                     snap: 480,
                     draw_length: 480,
                     playhead: None,
+                    entry: None,
                     names,
                     metrics: Metrics::for_test(scale),
                 };
@@ -1175,6 +1225,7 @@ mod tests {
                         snap: 480,
                         draw_length,
                         playhead: None,
+                        entry: None,
                         names: LaneNames::Octaves,
                         metrics: Metrics::for_test(1.0),
                     };

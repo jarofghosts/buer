@@ -69,6 +69,62 @@ The roll scales with `ui scale` like everything else — the zoom is held in scr
 rescaled by hand when the interface is. Without that it is the one part of the window that does not
 grow, and at 200 % a note comes out four pixels tall and reads as nothing at all.
 
+## Pads
+
+`input`, the first chip row above the roll, is how notes go in. **draw** is the roll and a pointer;
+**pads** puts a grid of them under it and leaves the roll where it is, because what the pads write
+has to be visible somewhere.
+
+Twenty-four pads to the octave: the twelve semitones along the bottom row of an octave, the twelve
+quarter tones directly above the notes they sharpen. The pad above a pad is a quarter tone up and
+the pad beside it a semitone, which is the one relation a twelve-key layout cannot show at all.
+
+A pad answers on the **press**, not on the click, and a touchscreen presses one as well as a mouse
+does: every finger keeps its own pad, so a chord is as many pads at once. The plugin window's
+backend reports no touches of its own today — a touchscreen reaches it as the mouse the system
+synthesises, which is the same press — and the multi-touch path is there for the day it does.
+
+- A pad **sounds** and, with **record** armed, **writes** at the mark — the pale line down the roll
+  with a flag in the ruler. The note is as long as `length`, and the mark then steps on by that
+  much, wrapping at the loop point. Disarmed, a pad only sounds: the grid is an instrument.
+- The mark moves on when the **last** finger lifts rather than the first, so a chord lands on one
+  step rather than spread over three.
+- **Sliding** a held pad takes its note with it. A slide is how a pitch is found on a grid this
+  fine, and one that wrote would leave a run of notes behind it.
+- **rest** leaves the step empty and moves on, **◀** goes back one, **⏮** returns to the start of the
+  pattern, and clicking the roll's **ruler** puts the mark wherever you point.
+- A whole chord is one `ctrl+z`.
+- `octave` is where the grid is looking. A taller window shows more octaves rather than thinner
+  rows, up to four.
+
+A lane the pattern's scale excludes is tinted out on the pads exactly as it is across the roll, and
+pressing it still writes — the pads give the roll's answer, not a second one.
+
+## Record
+
+`⏺ record`, beside the input chips, is whether what you play is written down. It arms the **note
+input**, which is the pads and whatever the host sends in — a keyboard on the track before this one.
+
+It never changes what *leaves* buer. `pass through` alone decides that, and it is on by default, so
+disarmed is not muted: you are playing through buer into the instrument after it with nothing being
+written. Armed changes nothing about what you hear either, which is what makes it safe to leave on.
+
+- **While the transport runs**, a key lands where the playhead is and is held to length — pressed at
+  the note, trimmed at the release, both rounded by `snap`. A key brushed comes out one snap long
+  rather than the shortest note there is; with `snap` off it is exactly what was played.
+- **While nothing runs**, a key lands at the mark and steps on when the last one lifts, exactly as a
+  pad does. So a keyboard is a way to step-enter chords as well as to play them.
+- A note appears **as you play it**, at the length a fresh one is drawn at, and is trimmed to its
+  real length when the key comes up.
+- Incoming **bends are read**, so an MPE controller records its quarter tones rather than the
+  semitones they were keyed from. Nothing on the wire declares what range the input was bent
+  against, so the instance's own `bend range` is assumed.
+- The slot being **edited** is the slot written into. Where that is not the slot sounding there is no
+  playhead on the roll, and a key goes to the mark instead — `follow` ties the two together.
+
+Recording needs the **window open**: the editor holds the working copy of the pattern, and there is
+nowhere for the audio thread to put a note without it.
+
 ## Getting a quarter tone out
 
 There are two ways to say "fifty cents above this note" to a CLAP host, and they are not

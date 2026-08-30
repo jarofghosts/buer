@@ -6,7 +6,7 @@
 //! anything is running — is an atomic, because a lock the editor holds for a frame is a lock the
 //! audio thread would have to wait on.
 
-use buer_core::{Bank, Note};
+use buer_core::{Bank, Lane, Note};
 use nih_plug::prelude::AtomicF32;
 use parking_lot::Mutex;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -21,11 +21,42 @@ pub struct Handoff {
     /// Notes the editor wants sounded once, so you hear the lane you landed on. Drawing on a
     /// twenty-four-row grid without hearing it is guesswork.
     pub auditions: Vec<Note>,
+    /// What the audio thread took off the note input while record was armed, waiting for the
+    /// editor to write it into the pattern. The other direction from everything else here.
+    pub captured: Vec<Captured>,
+}
+
+/// A key going down, or coming up again, on the note input while record was armed.
+///
+/// Sent as the two halves rather than as a finished note: pairing them means knowing which pattern
+/// is being written into, what the snap is and where the mark sits, and none of that belongs on the
+/// audio thread. The editor pairs them by channel and note, the way it pairs a finger with its pad.
+#[derive(Copy, Clone, Debug)]
+pub struct Captured {
+    pub on: bool,
+    pub channel: u8,
+    pub note: u8,
+    /// The lane the key landed on: its note, and whatever bend its channel was carrying. Read on
+    /// the way down only — an MPE channel bends while a note is held, and a key is paired with its
+    /// own release by channel and note rather than by where it ended up.
+    pub lane: Lane,
+    /// 1..=127 on the way down, and nothing on the way up.
+    pub velocity: u8,
+    /// Where the playhead was when it happened, in ticks, or `None` while nothing is running.
+    pub at: Option<f32>,
+    /// Which slot was sounding, so the editor can tell whether that position means anything for
+    /// the pattern it is writing into.
+    pub slot: usize,
 }
 
 /// How many auditions can be waiting at once. The main thread refuses to push past this, so the
 /// audio thread's drain is bounded and the vector never has to grow under it.
 pub const MAX_AUDITIONS: usize = 8;
+
+/// And how many captured halves can be waiting for the editor. Deep enough for a chord and a
+/// couple of seconds of playing between two frames; past that the oldest recording is the one
+/// nobody is watching, because the editor drains this every frame it draws.
+pub const MAX_CAPTURED: usize = 128;
 
 pub struct Shared {
     pub handoff: Mutex<Handoff>,
@@ -56,6 +87,7 @@ impl Default for Shared {
                 // Preallocated so neither side has to grow it while the other might be holding it.
                 retired: Vec::with_capacity(8),
                 auditions: Vec::with_capacity(MAX_AUDITIONS),
+                captured: Vec::with_capacity(MAX_CAPTURED),
                 ..Handoff::default()
             }),
             playhead: AtomicF32::new(0.0),
@@ -90,6 +122,30 @@ impl Shared {
         if handoff.auditions.len() < MAX_AUDITIONS {
             handoff.auditions.push(note);
         }
+    }
+
+    /// Hand the editor a key the input carried. Audio thread only, and dropped rather than queued
+    /// when the editor has not kept up or is not there at all — a window that is closed is a
+    /// window with no working copy to write into.
+    ///
+    /// A dropped half costs a length rather than a note: the editor writes on the way down and only
+    /// trims on the way up, so a lost release leaves a note of the length a fresh one is drawn at.
+    pub fn capture(&self, event: Captured) {
+        let Some(mut handoff) = self.handoff.try_lock() else {
+            return;
+        };
+        if handoff.captured.len() < MAX_CAPTURED {
+            handoff.captured.push(event);
+        }
+    }
+
+    /// Take what has been captured. Main thread only, once a frame.
+    ///
+    /// Drained rather than taken, for the reason [`Self::collect_garbage`] is: the vector the audio
+    /// thread pushes into has to come back with the room it had.
+    pub fn take_captured(&self) -> Vec<Captured> {
+        let mut handoff = self.handoff.lock();
+        handoff.captured.drain(..).collect()
     }
 
     pub fn set_status(&self, message: impl Into<String>) {

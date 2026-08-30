@@ -5,6 +5,7 @@
 //! explain *why* have come with it. What is new is [`roll`], the [`icon`], and the bank strip.
 
 pub mod icon;
+pub mod pads;
 pub mod roll;
 
 use buer_core::generate::{self, Shape, Spec};
@@ -222,6 +223,11 @@ struct EditorState {
     follow: bool,
     view: roll::View,
     gesture: roll::Gesture,
+    /// Whether notes are drawn on the roll or tapped in on the pads.
+    input: Input,
+    pads: pads::Pads,
+    /// Whether record was armed last frame, so disarming under a held key can be noticed.
+    armed: bool,
     selection: Vec<NoteId>,
     history: History,
     snap: u32,
@@ -260,6 +266,9 @@ impl Default for EditorState {
             follow: false,
             view: roll::View::default(),
             gesture: roll::Gesture::None,
+            input: Input::default(),
+            pads: pads::Pads::default(),
+            armed: false,
             selection: Vec::new(),
             history: History::default(),
             snap: TICKS_PER_BEAT / 4,
@@ -275,6 +284,17 @@ impl Default for EditorState {
             clipboard: None,
         }
     }
+}
+
+/// How notes go in.
+#[derive(Copy, Clone, Default, PartialEq, Eq)]
+enum Input {
+    /// Drawn on the roll, which wants a pointer and a steady hand.
+    #[default]
+    Draw,
+    /// Tapped on the pads, which a finger can reach. The roll stays where it is: what the pads
+    /// write has to be visible somewhere, and it is already drawn.
+    Pads,
 }
 
 impl EditorState {
@@ -344,6 +364,7 @@ pub fn create(params: Arc<BuerParams>, shared: Arc<Shared>) -> Option<Box<dyn Ed
             // Anything the audio thread displaced is dropped here, on the main thread.
             shared.collect_garbage();
             sync(state, &params, &shared);
+            capture(state, &params, &shared);
             handle_dropped_files(ctx, setter, &params, &shared, state);
 
             let host = HostScale::read(&shared);
@@ -378,8 +399,28 @@ pub fn create(params: Arc<BuerParams>, shared: Arc<Shared>) -> Option<Box<dyn Ed
                         roll_controls(ui, &params, setter, state, metrics);
                         ui.add_space(metrics.at(SECTION_GAP));
 
+                        // The pads take their share off the bottom of what the roll had, rather
+                        // than replacing it: notes tapped in that nothing shows are notes nobody
+                        // can check.
                         let height = roll_height(ui, state, metrics);
-                        show_roll(ui, &params, &shared, state, metrics, height);
+                        let pads = pads_height(state, metrics, height);
+                        show_roll(ui, &params, &shared, state, metrics, height - pads);
+                        if pads > 0.0 {
+                            ui.add_space(metrics.at(SECTION_GAP));
+                            show_pads(
+                                ui,
+                                &params,
+                                &shared,
+                                state,
+                                metrics,
+                                pads - metrics.at(SECTION_GAP),
+                            );
+                        } else if state.pads.rest() {
+                            // A pad held as the mode changed has nothing left to lift it, and the
+                            // step it opened has nothing left to close it.
+                            let bank = state.bank.clone();
+                            state.history.end(&bank);
+                        }
 
                         ui.add_space(metrics.at(SECTION_GAP));
                         let panels = egui::ScrollArea::vertical().show(ui, |ui| {
@@ -468,6 +509,114 @@ fn roll_height(ui: &egui::Ui, state: &EditorState, metrics: Metrics) -> f32 {
         .max(available * ROLL_FRACTION)
 }
 
+/// What the pads take out of the roll's height, which is nothing at all while notes are drawn.
+///
+/// Half, at the most: the pads are where a note is chosen and the roll is where it is checked, and
+/// a roll squeezed under a wall of pads answers neither question.
+fn pads_height(state: &EditorState, metrics: Metrics, height: f32) -> f32 {
+    if state.input != Input::Pads {
+        return 0.0;
+    }
+    (metrics.at(pads::WANTED) + metrics.at(SECTION_GAP)).min(height * 0.5)
+}
+
+/// What a note is written by, wherever it came from.
+fn terms(state: &EditorState) -> pads::Terms {
+    pads::Terms {
+        step: state.draw_length(),
+        snap: state.snap,
+    }
+}
+
+/// Take whatever the audio thread caught off the note input and write it into the pattern.
+///
+/// Every frame, and in either input mode: record arms the *note input*, and the pads are only one
+/// of the two things that reaches it. A key lands where the playhead is while something is running
+/// and at the mark while nothing is — the mark being drawn on the roll for exactly as long as
+/// there is a way for a note to land on it.
+///
+/// Which means recording needs the window open: the editor holds the working copy of the bank, and
+/// the audio thread has nowhere to put a note without it. See [`Shared::capture`].
+fn capture(state: &mut EditorState, params: &Arc<BuerParams>, shared: &Arc<Shared>) {
+    let armed = params.record.value();
+    let disarmed = state.armed && !armed;
+    state.armed = armed;
+
+    let events = shared.take_captured();
+    if events.is_empty() && !disarmed {
+        return;
+    }
+
+    let terms = terms(state);
+    let slot = state.slot;
+    let before = state.bank.clone();
+    let mut outcome = pads::Outcome::default();
+    {
+        let EditorState { bank, pads, .. } = state;
+        let pattern = bank.pattern_mut(slot);
+        if disarmed {
+            pads.drop_keys();
+        }
+        for event in &events {
+            pads.captured(pattern, event, slot, terms, &mut outcome);
+        }
+        pads.settle(pattern, terms.step, &mut outcome);
+    }
+
+    if let Some(label) = outcome.began {
+        state.history.begin(label, &before);
+    }
+    if outcome.changed {
+        commit(state, params);
+    }
+    if outcome.ended {
+        let bank = state.bank.clone();
+        state.history.end(&bank);
+    }
+}
+
+fn show_pads(
+    ui: &mut egui::Ui,
+    params: &Arc<BuerParams>,
+    shared: &Arc<Shared>,
+    state: &mut EditorState,
+    metrics: Metrics,
+    height: f32,
+) {
+    let terms = terms(state);
+    let record = params.record.value();
+    let slot = state.slot;
+    // The same bargain the roll makes: the before-image is taken only on a frame a press could open
+    // a gesture, and a chord that spans several frames keeps the first one — see `History::begin`.
+    let pressing = pads::pressed(ui);
+    let before = pressing.then(|| state.bank.clone());
+
+    let outcome = {
+        let EditorState { bank, pads, .. } = state;
+        let mut context = pads::Context {
+            pads,
+            terms,
+            record,
+            metrics,
+        };
+        pads::show(ui, bank.pattern_mut(slot), &mut context, height)
+    };
+
+    if let (Some(label), Some(before)) = (outcome.began, &before) {
+        state.history.begin(label, before);
+    }
+    if outcome.changed {
+        commit(state, params);
+    }
+    if outcome.ended {
+        let bank = state.bank.clone();
+        state.history.end(&bank);
+    }
+    for note in outcome.auditions {
+        shared.audition(note);
+    }
+}
+
 fn show_roll(
     ui: &mut egui::Ui,
     params: &Arc<BuerParams>,
@@ -489,6 +638,8 @@ fn show_roll(
     let snap = state.snap;
     let draw_length = state.draw_length();
     let names = *params.lane_names.read();
+    // Shown while there is a way for a note to land on it: the pads, or a key with record armed.
+    let entry = (state.input == Input::Pads || params.record.value()).then_some(state.pads.entry);
     let slot = state.slot;
     // The before-image for the undo stack, taken only on the frame a press could start a gesture.
     // Cloning the bank every frame to have one ready would be sixty copies a second of something
@@ -511,6 +662,7 @@ fn show_roll(
             snap,
             draw_length,
             playhead,
+            entry,
             names,
             metrics,
         };
@@ -529,6 +681,9 @@ fn show_roll(
     }
     if let Some(note) = outcome.audition {
         shared.audition(note);
+    }
+    if let Some(mark) = outcome.entry {
+        state.pads.entry = mark;
     }
 }
 
@@ -833,6 +988,16 @@ fn roll_controls(
     metrics: Metrics,
 ) {
     ui.horizontal_wrapped(|ui| {
+        ui.label(egui::RichText::new("input").small().weak());
+        chip(ui, "draw", state.input == Input::Draw, || {
+            state.input = Input::Draw
+        });
+        chip(ui, "pads", state.input == Input::Pads, || {
+            state.input = Input::Pads
+        });
+        record_arm(ui, params, setter);
+
+        ui.add_space(metrics.at(SECTION_GAP));
         ui.label(egui::RichText::new("snap").small().weak());
         for (name, ticks) in DIVISIONS {
             chip(ui, name, state.snap == ticks, || state.snap = ticks);
@@ -906,6 +1071,34 @@ fn roll_controls(
             }
         }
     });
+}
+
+/// The record arm: whether what is played is written down.
+///
+/// Beside the input chips rather than with the transport, because it is what note input *does* —
+/// and loud when it is on, since a plugin quietly writing what you play is worse than one quietly
+/// not writing it.
+fn record_arm(ui: &mut egui::Ui, params: &Arc<BuerParams>, setter: &ParamSetter) {
+    let armed = params.record.value();
+    let text = egui::RichText::new("⏺ record");
+    let response = ui
+        .selectable_label(
+            armed,
+            if armed {
+                text.color(ACCENT_BRIGHT)
+            } else {
+                text.color(TEXT_FADE)
+            },
+        )
+        .on_hover_text(
+            "write what is played into this pattern — the pads, and whatever the host sends in. \
+             what leaves buer is `pass through`'s question either way",
+        );
+    if response.clicked() {
+        setter.begin_set_parameter(&params.record);
+        setter.set_parameter(&params.record, !armed);
+        setter.end_set_parameter(&params.record);
+    }
 }
 
 /// A small selectable label, accented when chosen. [`radio`] with the circles taken off — a length

@@ -158,6 +158,17 @@ pub struct BuerParams {
     /// hosts route the keyboard through the plugin and expect it back out, so this defaults on.
     #[id = "thru"]
     pub pass_through: BoolParam,
+    /// Whether what is played is written into the pattern being edited.
+    ///
+    /// A parameter rather than editor state, for the reason `play` is one: the audio thread is what
+    /// reads the note input, and it cannot see anything the editor keeps to itself. Which also
+    /// makes arming it something a host can automate.
+    ///
+    /// It never changes what leaves the plugin — [`Self::pass_through`] alone decides that — so
+    /// disarmed is not muted: it is playing through buer to the instrument after it, with nothing
+    /// written down.
+    #[id = "rec"]
+    pub record: BoolParam,
 
     #[persist = "bank"]
     pub bank: BankSlot,
@@ -238,6 +249,7 @@ impl BuerParams {
                     parse_number(text).map(|semitones| (semitones * 2.0).round() as i32)
                 })),
             pass_through: BoolParam::new("pass through", true),
+            record: BoolParam::new("record", false),
             bank: BankSlot::new(shared),
             random: RwLock::new(Spec::default()),
             scale: RwLock::new(StoredScale::default()),

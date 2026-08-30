@@ -20,13 +20,13 @@ mod shared;
 
 use buer_core::mpeout::{Out, Voice};
 use buer_core::player::{Clock, Player};
-use buer_core::{Bank, TICKS_PER_BEAT};
+use buer_core::{pitch, Bank, TICKS_PER_BEAT};
 use nih_plug::prelude::*;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
 pub use params::{BuerParams, ClockParam, PitchOutParam, ZoneParam};
-pub use shared::Shared;
+pub use shared::{Captured, Shared};
 
 pub struct Buer {
     params: Arc<BuerParams>,
@@ -50,6 +50,11 @@ pub struct Buer {
     /// offset zero: an audition is a nicety and sample accuracy would only risk putting an event
     /// out of order behind one the sequencer generated.
     auditions: [Option<Audition>; MAX_AUDITIONS],
+    /// What each input channel is currently bent by, in semitones, so a key that arrives in the
+    /// MPE dialect is recorded on the lane it actually sounds at rather than on the semitone it
+    /// was keyed from. One per MIDI channel, and it has to outlive the block: the bend precedes
+    /// its note, which is frequently the last thing in the block before it.
+    input_bends: [f32; 16],
     sample_rate: f32,
 }
 
@@ -79,6 +84,7 @@ impl Default for Buer {
             panic: true,
             announce: true,
             auditions: [None; MAX_AUDITIONS],
+            input_bends: [0.0; 16],
             sample_rate: 48_000.0,
         }
     }
@@ -170,12 +176,87 @@ impl Buer {
     }
 }
 
+/// What record does to the note input on its way past: nothing at all, or a copy to the editor.
+///
+/// It is only ever a copy. Whether the input reaches the output is `pass through`'s question and
+/// stays its question, so arming record does not silence the keyboard you are playing — and
+/// disarming it does not turn anything on either.
+struct Capture<'a> {
+    shared: &'a Shared,
+    armed: bool,
+    /// The playhead at the top of the block, and what a sample is worth in ticks, so each event's
+    /// own position can be worked out from the offset it carries.
+    ticks: f32,
+    ticks_per_sample: f32,
+    playing: bool,
+    slot: usize,
+    /// The bend standing on each channel. Held across blocks by the plugin.
+    bends: &'a mut [f32; 16],
+    /// The range those bends are read against.
+    ///
+    /// Nothing on the wire says what the *input* was bent against — the RPN that would is a message
+    /// this never sees a declaration of — so the instance's own range is assumed. It is the one
+    /// number buer publishes, and a controller playing into it is set to the same.
+    range: f32,
+}
+
+impl Capture<'_> {
+    /// Take a copy of a key, or follow a bend so the next key lands on the right lane.
+    fn take(&mut self, event: &NoteEvent<()>) {
+        if !self.armed {
+            return;
+        }
+        match *event {
+            NoteEvent::MidiPitchBend { channel, value, .. } => {
+                if let Some(bend) = self.bends.get_mut(channel as usize) {
+                    *bend = (value * 2.0 - 1.0) * self.range;
+                }
+            }
+            NoteEvent::NoteOn {
+                timing,
+                channel,
+                note,
+                velocity,
+                ..
+            } => {
+                let velocity = (velocity * 127.0).round().clamp(1.0, 127.0) as u8;
+                self.push(true, timing, channel, note, velocity);
+            }
+            NoteEvent::NoteOff {
+                timing,
+                channel,
+                note,
+                ..
+            } => self.push(false, timing, channel, note, 0),
+            _ => {}
+        }
+    }
+
+    fn push(&mut self, on: bool, timing: u32, channel: u8, note: u8, velocity: u8) {
+        let bend = self.bends.get(channel as usize).copied().unwrap_or(0.0);
+        self.shared.capture(Captured {
+            on,
+            channel,
+            note,
+            lane: pitch::from_pitch(note as f32 + bend),
+            velocity,
+            // Where the playhead will be when this event happens, which is where it is written.
+            // Nothing running is a note with no position, and the editor puts it at the mark.
+            at: self
+                .playing
+                .then_some(self.ticks + timing as f32 * self.ticks_per_sample),
+            slot: self.slot,
+        });
+    }
+}
+
 /// Push every input event at or before `upto`, then stop, keeping the one that was too late.
 fn flush_input<C: ProcessContext<Buer>>(
     context: &mut C,
     pending: &mut Option<NoteEvent<()>>,
     upto: u32,
     pass: bool,
+    capture: &mut Capture,
 ) {
     loop {
         let Some(event) = pending.take().or_else(|| context.next_event()) else {
@@ -185,6 +266,9 @@ fn flush_input<C: ProcessContext<Buer>>(
             *pending = Some(event);
             return;
         }
+        // Read before it is sent, and read whether it is sent or not: what buer writes down and
+        // what it passes on are two questions with two switches.
+        capture.take(&event);
         if pass {
             context.send_event(event);
         }
@@ -304,6 +388,10 @@ impl Plugin for Buer {
         let samples = buffer.samples() as u32;
         let params = &self.params;
         let pass = params.pass_through.value();
+        let armed = params.record.value();
+        // Taken as a handle rather than borrowed out of `self`, which the methods below want
+        // whole. Bumping an `Arc` allocates nothing.
+        let shared = self.shared.clone();
 
         // Everything read off the parameters and the transport first, so that `context` is free for
         // events from here on.
@@ -360,21 +448,34 @@ impl Plugin for Buer {
 
         let bank = self.bank.clone();
         let mut pending = self.pending_input.take();
+        // The bends live in a local for the length of the block, for the same reason `pending`
+        // does: the closures below cannot hold a piece of `self` while `self` is being called.
+        let mut bends = self.input_bends;
+        let mut capture = Capture {
+            shared: &shared,
+            armed,
+            ticks: self.player.position() as f32,
+            ticks_per_sample: ticks_per_sample as f32,
+            playing,
+            slot: self.player.slot(),
+            bends: &mut bends,
+            range: params.bend_range.value() as f32,
+        };
 
         if self.panic {
             self.silence_auditions(&mut |offset, event| {
-                flush_input(context, &mut pending, offset, pass);
+                flush_input(context, &mut pending, offset, pass, &mut capture);
                 send(context, offset, event);
             });
             self.player.silence(&mut |offset, event| {
-                flush_input(context, &mut pending, offset, pass);
+                flush_input(context, &mut pending, offset, pass, &mut capture);
                 send(context, offset, event);
             });
             self.panic = false;
         }
 
         if std::mem::take(&mut self.announce) {
-            flush_input(context, &mut pending, 0, pass);
+            flush_input(context, &mut pending, 0, pass, &mut capture);
             let mpe = self.player.mpe();
             let mut events = |event| send(context, 0, event);
             mpe.announce(&mut events);
@@ -382,7 +483,7 @@ impl Plugin for Buer {
 
         self.auditions(
             &mut |offset, event| {
-                flush_input(context, &mut pending, offset, pass);
+                flush_input(context, &mut pending, offset, pass, &mut capture);
                 send(context, offset, event);
             },
             samples,
@@ -398,14 +499,15 @@ impl Plugin for Buer {
             samples,
             looping,
             &mut |offset, event| {
-                flush_input(context, &mut pending, offset, pass);
+                flush_input(context, &mut pending, offset, pass, &mut capture);
                 send(context, offset, event);
             },
         );
 
         // Whatever the host sent after the last note we generated still has to go out.
-        flush_input(context, &mut pending, u32::MAX, pass);
+        flush_input(context, &mut pending, u32::MAX, pass, &mut capture);
         self.pending_input = pending;
+        self.input_bends = bends;
 
         if free && playing {
             self.free_ticks += samples as f64 * ticks_per_sample;
@@ -429,3 +531,109 @@ impl ClapPlugin for Buer {
 }
 
 nih_export_clap!(Buer);
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A capture reader over a fresh `Shared`, at 120 bpm and half a bar in.
+    fn capture<'a>(shared: &'a Shared, bends: &'a mut [f32; 16], armed: bool) -> Capture<'a> {
+        Capture {
+            shared,
+            armed,
+            ticks: 3840.0,
+            // A sixteenth every hundred samples, so an offset is easy to read off the result.
+            ticks_per_sample: 4.8,
+            playing: true,
+            slot: 0,
+            bends,
+            range: 48.0,
+        }
+    }
+
+    fn note_on(timing: u32, channel: u8, note: u8) -> NoteEvent<()> {
+        NoteEvent::NoteOn {
+            timing,
+            voice_id: None,
+            channel,
+            note,
+            velocity: 100.0 / 127.0,
+        }
+    }
+
+    #[test]
+    fn a_key_is_captured_where_the_playhead_will_be_when_it_sounds() {
+        let shared = Shared::default();
+        let mut bends = [0.0; 16];
+        capture(&shared, &mut bends, true).take(&note_on(100, 0, 60));
+
+        let taken = shared.take_captured();
+        assert_eq!(taken.len(), 1);
+        assert!(taken[0].on);
+        assert_eq!(taken[0].note, 60);
+        assert_eq!(taken[0].lane, 120);
+        assert_eq!(taken[0].velocity, 100);
+        // Half a bar in, plus the sixteenth its offset is worth.
+        assert_eq!(taken[0].at, Some(4320.0));
+    }
+
+    #[test]
+    fn a_bent_channel_is_captured_on_the_lane_it_actually_sounds_at() {
+        let shared = Shared::default();
+        let mut bends = [0.0; 16];
+        let mut capture = capture(&shared, &mut bends, true);
+
+        // A quarter tone above centre at ±48, which is what buer itself sends: 85 of the 8192
+        // units above 8192, as a normalised bend.
+        let value = (8192.0 + 85.0) / 16383.0;
+        capture.take(&NoteEvent::MidiPitchBend {
+            timing: 0,
+            channel: 3,
+            value,
+        });
+        capture.take(&note_on(0, 3, 60));
+        // And a key on a channel nothing bent is where it was keyed from.
+        capture.take(&note_on(0, 4, 60));
+
+        let taken = shared.take_captured();
+        assert_eq!(taken[0].lane, 121, "the quarter tone was rounded away");
+        assert_eq!(taken[1].lane, 120);
+    }
+
+    #[test]
+    fn nothing_is_captured_while_record_is_off() {
+        let shared = Shared::default();
+        let mut bends = [0.0; 16];
+        capture(&shared, &mut bends, false).take(&note_on(0, 0, 60));
+        assert!(shared.take_captured().is_empty());
+    }
+
+    #[test]
+    fn a_key_played_while_nothing_runs_is_captured_with_no_position() {
+        let shared = Shared::default();
+        let mut bends = [0.0; 16];
+        let mut capture = capture(&shared, &mut bends, true);
+        capture.playing = false;
+        capture.take(&note_on(0, 0, 60));
+
+        // The editor puts one of these at the mark; where the playhead is standing is not a place
+        // anybody asked for.
+        assert_eq!(shared.take_captured()[0].at, None);
+    }
+
+    #[test]
+    fn the_queue_stops_at_its_capacity_rather_than_growing_under_the_audio_thread() {
+        let shared = Shared::default();
+        let mut bends = [0.0; 16];
+        let mut capture = capture(&shared, &mut bends, true);
+        let room = shared.handoff.lock().captured.capacity();
+
+        for _ in 0..room * 2 {
+            capture.take(&note_on(0, 0, 60));
+        }
+
+        let taken = shared.take_captured();
+        assert_eq!(taken.len(), shared::MAX_CAPTURED);
+        assert_eq!(shared.handoff.lock().captured.capacity(), room);
+    }
+}
