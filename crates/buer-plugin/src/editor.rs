@@ -386,8 +386,6 @@ pub fn create(params: Arc<BuerParams>, shared: Arc<Shared>) -> Option<Box<dyn Ed
                             ui.set_max_width(
                                 (ui.available_width() - ui.spacing().scroll.bar_width).max(1.0),
                             );
-                            transport(ui, &params, setter, metrics);
-                            ui.separator();
                             randomise(ui, &params, &shared, state, metrics);
                         });
                         state.panels_height = Some(panels.content_size.y);
@@ -926,9 +924,9 @@ fn chip(ui: &mut egui::Ui, name: &str, selected: bool, choose: impl FnOnce()) {
 
 /// The settings menu: what is set once for an instance and then left alone.
 ///
-/// Both of the sections behind it used to sit under the roll, where between them they were four
-/// rows of controls permanently in the way of the thing they configure. Over the window instead,
-/// and only when asked for.
+/// The sections behind it used to sit under the roll, where between them they were rows of
+/// controls permanently in the way of the thing they configure. Over the window instead, and only
+/// when asked for.
 fn settings(
     ctx: &egui::Context,
     params: &Arc<BuerParams>,
@@ -961,12 +959,14 @@ fn settings(
         });
         ui.separator();
 
-        // At a large ui scale in a small window the two sections are taller than the screen, and a
-        // menu that cannot be scrolled back to its own close button is a trap.
+        // At a large ui scale in a small window the sections are taller than the screen, and a menu
+        // that cannot be scrolled back to its own close button is a trap.
         egui::ScrollArea::vertical()
             .max_height(screen.height() * 0.75)
             .show(ui, |ui| {
                 ui.set_max_width(width);
+                transport(ui, params, setter, metrics);
+                ui.separator();
                 output(ui, params, setter, metrics);
                 ui.separator();
                 scale(ui, params, shared, state, metrics);
@@ -1006,6 +1006,7 @@ fn output(ui: &mut egui::Ui, params: &Arc<BuerParams>, setter: &ParamSetter, met
     }
 }
 
+/// What drives the playhead, and how long each note is held once it starts.
 fn transport(ui: &mut egui::Ui, params: &Arc<BuerParams>, setter: &ParamSetter, metrics: Metrics) {
     ui.label(egui::RichText::new("transport").strong());
     ui.horizontal_wrapped(|ui| {
