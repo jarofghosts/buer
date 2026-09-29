@@ -516,6 +516,15 @@ impl Pads {
         }
     }
 
+    /// The lanes down right now, deduplicated — a chord as it actually sounds, whichever pads or
+    /// keys put it there.
+    pub fn held_lanes(&self) -> Vec<Lane> {
+        let mut lanes: Vec<Lane> = self.held.iter().map(|held| held.lane).collect();
+        lanes.sort_unstable();
+        lanes.dedup();
+        lanes
+    }
+
     /// Let go of every key, for record being disarmed under one that is still down. The release
     /// that would have trimmed it is never coming, and it keeps the length it was written at.
     pub fn drop_keys(&mut self) {
@@ -1380,6 +1389,43 @@ mod tests {
         assert_eq!(pattern.notes().len(), 1);
         assert_eq!(pattern.notes()[0].length, terms().step);
         assert!(pads.held.is_empty());
+    }
+
+    #[test]
+    fn held_lanes_are_sorted_and_a_lane_under_two_fingers_is_named_once() {
+        let mut pattern = Pattern::default();
+        let mut pads = pads();
+        let mut outcome = Outcome::default();
+
+        pads.press(
+            &mut pattern,
+            Source::Pointer,
+            127,
+            VELOCITY,
+            terms(),
+            Write::Mark,
+            &mut outcome,
+        );
+        pads.press(
+            &mut pattern,
+            Source::Finger(egui::TouchDeviceId(0), egui::TouchId(1)),
+            120,
+            VELOCITY,
+            terms(),
+            Write::Mark,
+            &mut outcome,
+        );
+        pads.press(
+            &mut pattern,
+            Source::Finger(egui::TouchDeviceId(0), egui::TouchId(2)),
+            120,
+            VELOCITY,
+            terms(),
+            Write::Mark,
+            &mut outcome,
+        );
+
+        assert_eq!(pads.held_lanes(), vec![120, 127]);
     }
 
     #[test]

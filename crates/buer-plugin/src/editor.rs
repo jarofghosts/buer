@@ -9,7 +9,7 @@ pub mod pads;
 pub mod roll;
 
 use buer_core::generate::{self, Shape, Spec};
-use buer_core::pattern::{Bank, LaneMask, NoteId, Pattern, SLOTS};
+use buer_core::pattern::{Bank, Lane, LaneMask, NoteId, Pattern, SLOTS};
 use buer_core::{pitch, scales, TICKS_PER_BEAT};
 use nih_plug::params::persist::PersistentField;
 use nih_plug::prelude::*;
@@ -20,6 +20,7 @@ use std::collections::{BTreeMap, VecDeque};
 use std::path::Path;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use crate::display;
 use crate::midi;
@@ -210,6 +211,46 @@ impl History {
     }
 }
 
+/// How long a note stays in the readout after it stops sounding — long enough to read a quick tap,
+/// short enough that the readout is still saying what just happened rather than what happened a
+/// while ago.
+const PLAYED_HOLD: Duration = Duration::from_millis(900);
+
+/// What has sounded recently, for the readout in the corner. A lane still held is refreshed every
+/// frame, so it never falls out of this on its own; one that has been let go fades after
+/// [`PLAYED_HOLD`].
+#[derive(Default)]
+struct Played {
+    recent: Vec<(Lane, Instant)>,
+}
+
+impl Played {
+    fn note(&mut self, lane: Lane) {
+        let now = Instant::now();
+        match self.recent.iter_mut().find(|(held, _)| *held == lane) {
+            Some(entry) => entry.1 = now,
+            None => self.recent.push((lane, now)),
+        }
+    }
+
+    /// Whether there is anything to show or still to fade — the editor's cue to keep repainting.
+    fn active(&self) -> bool {
+        !self.recent.is_empty()
+    }
+
+    /// Names still worth showing, oldest first so a chord reads in the order it was played. Prunes
+    /// whatever has aged out, which is why this takes `&mut self`.
+    fn names(&mut self) -> Vec<String> {
+        let now = Instant::now();
+        self.recent
+            .retain(|(_, at)| now.duration_since(*at) <= PLAYED_HOLD);
+        self.recent
+            .iter()
+            .map(|(lane, _)| pitch::describe(*lane))
+            .collect()
+    }
+}
+
 struct EditorState {
     /// The editor's working copy, and the one that is edited. Published to the audio thread and
     /// written back into the parameter's slot whenever it changes.
@@ -254,6 +295,8 @@ struct EditorState {
     /// The pattern last copied, if any. One deep, and it lives as long as the window: a paste is a
     /// gesture rather than something a project should carry.
     clipboard: Option<Pattern>,
+    /// What has sounded recently, for the readout in the corner.
+    played: Played,
 }
 
 impl Default for EditorState {
@@ -282,6 +325,7 @@ impl Default for EditorState {
             export_repeats: 1,
             settings_open: false,
             clipboard: None,
+            played: Played::default(),
         }
     }
 }
@@ -384,7 +428,7 @@ pub fn create(params: Arc<BuerParams>, shared: Arc<Shared>) -> Option<Box<dyn Ed
             }
 
             let running = shared.running.load(Ordering::Relaxed);
-            if running {
+            if running || state.played.active() {
                 ctx.request_repaint();
             }
 
@@ -421,6 +465,11 @@ pub fn create(params: Arc<BuerParams>, shared: Arc<Shared>) -> Option<Box<dyn Ed
                             let bank = state.bank.clone();
                             state.history.end(&bank);
                         }
+                        // A pad or a key still down is still sounding, whichever mode is on screen
+                        // — capture() feeds the note input through the pads either way.
+                        for lane in state.pads.held_lanes() {
+                            state.played.note(lane);
+                        }
 
                         ui.add_space(metrics.at(SECTION_GAP));
                         let panels = egui::ScrollArea::vertical().show(ui, |ui| {
@@ -434,6 +483,8 @@ pub fn create(params: Arc<BuerParams>, shared: Arc<Shared>) -> Option<Box<dyn Ed
             });
 
             settings(ctx, &params, &shared, setter, state, metrics);
+
+            note_readout(ctx, state, metrics);
 
             keys(ctx, &params, state, &shared);
         },
@@ -614,6 +665,7 @@ fn show_pads(
     }
     for note in outcome.auditions {
         shared.audition(note);
+        state.played.note(note.lane);
     }
 }
 
@@ -681,10 +733,71 @@ fn show_roll(
     }
     if let Some(note) = outcome.audition {
         shared.audition(note);
+        state.played.note(note.lane);
     }
     if let Some(mark) = outcome.entry {
         state.pads.entry = mark;
     }
+}
+
+/// The corner readout: what is sounding right now, and what is selected on the roll.
+///
+/// A floating area rather than a row in the stack — the stack is already full width and top to
+/// bottom, and the one place left for something that should sit apart from it is a corner nothing
+/// else claims. Not interactable, so it never steals a click meant for whatever is under it.
+fn note_readout(ctx: &egui::Context, state: &mut EditorState, metrics: Metrics) {
+    let playing = state.played.names();
+    let selected: Vec<String> = {
+        let pattern = state.bank.pattern(state.slot);
+        state
+            .selection
+            .iter()
+            .filter_map(|id| pattern.find(*id))
+            .map(|note| pitch::describe(note.lane))
+            .collect()
+    };
+
+    if playing.is_empty() && selected.is_empty() {
+        return;
+    }
+
+    egui::Area::new(egui::Id::new("note readout"))
+        .anchor(
+            egui::Align2::RIGHT_BOTTOM,
+            egui::vec2(-metrics.at(WINDOW_PADDING), -metrics.at(WINDOW_PADDING)),
+        )
+        .order(egui::Order::Foreground)
+        .interactable(false)
+        .show(ctx, |ui| {
+            egui::Frame::NONE
+                .fill(egui::Color32::from_black_alpha(190))
+                .corner_radius(egui::CornerRadius::same(3))
+                .inner_margin(egui::Margin::symmetric(
+                    metrics.at(6.0) as i8,
+                    metrics.at(4.0) as i8,
+                ))
+                .show(ui, |ui| {
+                    ui.set_max_width(metrics.at(240.0));
+                    ui.with_layout(egui::Layout::top_down(egui::Align::Max), |ui| {
+                        if !playing.is_empty() {
+                            ui.label(
+                                egui::RichText::new(format!("playing  {}", playing.join(" ")))
+                                    .monospace()
+                                    .small()
+                                    .color(ACCENT_BRIGHT),
+                            );
+                        }
+                        if !selected.is_empty() {
+                            ui.label(
+                                egui::RichText::new(format!("selected {}", selected.join(" ")))
+                                    .monospace()
+                                    .small()
+                                    .color(TEXT),
+                            );
+                        }
+                    });
+                });
+        });
 }
 
 /// Keys the roll answers to. Read from the context rather than from a response, so they work
