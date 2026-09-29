@@ -389,8 +389,14 @@ fn handle(
         return;
     }
 
+    // `interact_pointer_pos` on a `drag_started` frame reports wherever the pointer is *now* -
+    // egui only raises `drag_started` once the pointer has crossed its drag threshold, and by then
+    // the press may already have travelled well clear of the note it grabbed. `press_origin` is
+    // where the button actually went down, which is what hit-testing has to use.
+    let press_origin = ui.input(|input| input.pointer.press_origin());
+
     if velocity_response.drag_started() {
-        if let Some(at) = velocity_response.interact_pointer_pos() {
+        if let Some(at) = press_origin {
             if let Some(id) = velocity_under(pattern, ctx.view, velocity_rect, at) {
                 let was = pattern.find(id).map(|note| note.velocity).unwrap_or(100);
                 *ctx.gesture = Gesture::Velocity {
@@ -404,7 +410,7 @@ fn handle(
     }
 
     if response.drag_started() {
-        if let Some(at) = response.interact_pointer_pos() {
+        if let Some(at) = press_origin {
             match hit(pattern, ctx.view, grid, at, grab) {
                 Some((id, edge)) => {
                     if !ctx.selection.contains(&id) {
@@ -1273,6 +1279,41 @@ mod tests {
         // clicking just after a beat must not put the note before it.
         assert_eq!(snapped_down(479.0, 480), 0);
         assert_eq!(snapped_down(481.0, 480), 480);
+    }
+
+    #[test]
+    fn dragging_a_notes_body_moves_it_rather_than_drawing_a_new_one() {
+        // egui only raises `drag_started` once the pointer has crossed its drag threshold, and a
+        // single big jump from press to release (as a real fast drag, or this test, produces)
+        // crosses it in one frame. `interact_pointer_pos` on that frame reports where the pointer
+        // is *now*, not where the button went down — using it for the hit-test missed the note
+        // entirely and drew a fresh one under the pointer's new position instead of moving it.
+        let mut probe = Pattern::empty("p", 4, 4);
+        probe.insert(Note::new(1920, 1920, 120, 100));
+        let rect = note_rects(&painted(&mut probe, View::default(), 1.0))[0];
+        let press_at = rect.center();
+        let target = egui::pos2(press_at.x + 200.0, press_at.y - 66.0);
+
+        let mut pattern = Pattern::empty("p", 4, 4);
+        pattern.insert(Note::new(1920, 1920, 120, 100));
+        frames(
+            &mut pattern,
+            480,
+            &[
+                vec![egui::Event::PointerMoved(press_at)],
+                vec![press(press_at, true)],
+                vec![egui::Event::PointerMoved(target)],
+                vec![press(target, false)],
+            ],
+        );
+        assert_eq!(
+            pattern.notes().len(),
+            1,
+            "a new note was drawn instead of moving the existing one"
+        );
+        let moved = pattern.notes()[0];
+        assert_ne!(moved.start, 1920, "the note did not move in time");
+        assert_ne!(moved.lane, 120, "the note did not move in pitch");
     }
 
     #[test]
