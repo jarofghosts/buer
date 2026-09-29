@@ -275,8 +275,46 @@ fn flush_input<C: ProcessContext<Buer>>(
     }
 }
 
+/// Whether to log every event on its way out, asked once and remembered.
+///
+/// A quarter tone that does not arrive is either one that was never sent or one the host dropped in
+/// between, and those two have entirely different fixes. This says which, and is off unless
+/// `BUER_NOTE_LOG` is set, because it logs from the audio thread.
+fn note_log() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var_os("BUER_NOTE_LOG").is_some())
+}
+
 /// Put a sample offset on one of the player's events and hand it to the host.
 fn send<C: ProcessContext<Buer>>(context: &mut C, timing: u32, event: Out) {
+    if note_log() {
+        match event {
+            // The 14-bit word as well as the normalised value, because the word is what a monitor
+            // shows and what the arithmetic in `mpeout` is written in.
+            Out::Bend { channel, value } => nih_log!(
+                "sent bend    ch {channel} word {}",
+                (value * 16_383.0).round() as u16
+            ),
+            Out::NoteOn {
+                voice_id,
+                channel,
+                note,
+                ..
+            } => nih_log!("sent note on ch {channel} note {note} voice {voice_id}"),
+            Out::Tuning {
+                voice_id,
+                channel,
+                note,
+                semitones,
+            } => nih_log!(
+                "sent tuning  ch {channel} note {note} voice {voice_id} {semitones:+.4} st"
+            ),
+            Out::Cc { channel, cc, value } => {
+                nih_log!("sent cc      ch {channel} cc {cc} value {value}")
+            }
+            Out::NoteOff { .. } => {}
+        }
+    }
     let event = match event {
         Out::Bend { channel, value } => NoteEvent::MidiPitchBend {
             timing,
